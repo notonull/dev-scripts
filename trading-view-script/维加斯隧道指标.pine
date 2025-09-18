@@ -1,0 +1,45 @@
+//@version=5
+indicator(title="维加斯隧道交易策略", shorttitle="维加斯隧道交易策略", overlay=true)
+// === 可调参数 ===
+emaFilterPeriod = input.int(12, "过滤线")
+emaMid1Period = input.int(144, "中短期隧道上轨")
+emaMid2Period = input.int(169, "中短期隧道下轨")
+emaLong1Period = input.int(576, "长期隧道上轨")
+emaLong2Period = input.int(676, "长期隧道下轨")
+fundSettlementDays = input.int(1, "资金交割日 (N个交易日后)")
+
+// === 计算EMA ===
+emaFilter = ta.ema(close, emaFilterPeriod)
+emaMid1 = ta.ema(close, emaMid1Period)
+emaMid2 = ta.ema(close, emaMid2Period)
+emaLong1 = ta.ema(close, emaLong1Period)
+emaLong2 = ta.ema(close, emaLong2Period)
+
+// === 用户输入颜色 ===
+emaFilterColor = input.color(color.white, "过滤线颜色")
+midLongColorInput = input.color(color.aqua, "中短期多头")
+midShortColorInput = input.color(color.orange, "中短期空头")
+longLongColorInput = input.color(color.green, "长期多头")
+longShortColorInput = input.color(color.red, "长期空头")
+
+// === 添加透明度用于隧道填充 ===
+midLongColor = color.new(midLongColorInput, 40)
+midShortColor = color.new(midShortColorInput, 40)
+longLongColor = color.new(longLongColorInput, 40)
+longShortColor = color.new(longShortColorInput, 40)
+
+// === 绘制EMA线 ===
+plot(emaFilter, color=emaFilterColor, title="过滤线")
+plot_emaMid1 = plot(emaMid1, color=midLongColorInput, title="中短期上轨")
+plot_emaMid2 = plot(emaMid2, color=midShortColorInput, title="中短期下轨")
+plot_emaLong1 = plot(emaLong1, color=longLongColorInput, title="长期上轨")
+plot_emaLong2 = plot(emaLong2, color=longShortColorInput, title="长期下轨")
+
+// === 隧道趋势判定与填充 ===
+isMidUp = emaMid1 > emaMid2
+fillMidColor = isMidUp ? midLongColor : midShortColor
+fill(plot_emaMid1, plot_emaMid2, color=fillMidColor, title="中短期隧道")
+
+isLongUp = emaLong1 > emaLong2
+fillLongColor = isLongUp ? longLongColor : longShortColor
+fill(plot_emaLong1, plot_emaLong2, color=fillLongColor, title="长期隧道")
