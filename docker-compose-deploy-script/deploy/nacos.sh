@@ -57,6 +57,27 @@ pull() {
 # 安装之后操作
 install_after() {
     log_info "无后续操作"
+#    log_info "等待 $base_container_name 服务完全启动..."
+#    if wait_for_service "$base_ip" "9080" 120; then
+#      log_info "拷贝 Nacos 初始化 SQL 到当前目录..."
+#
+#      if [ ! -f ./mysql-schema.sql ]; then
+#        docker cp $base_container_name:/home/nacos/conf/mysql-schema.sql ./mysql-schema.sql
+#        log_error "mysql-schema.sql 文件未找到，容器拷贝完成"
+#       exit 1
+#      fi
+#      log_info "在 MySQL 容器中创建数据库"
+      docker exec -i mysql mysql -u root -p123456 -e \
+       "CREATE DATABASE IF NOT EXISTS nacos_config DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+#
+#      log_info "导入 Nacos 初始化 SQL..."
+#      docker exec -i mysql mysql -u root -p123456 nacos_config < ./mysql-schema.sql
+#
+#      log_info "Nacos 数据库初始化完成 ✅"
+#
+#    else
+#        log_warn "$base_container_name 服务启动超时，请检查服务状态"
+#    fi
 }
 
 # 安装服务

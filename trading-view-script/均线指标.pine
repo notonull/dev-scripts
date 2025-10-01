@@ -1,45 +1,33 @@
 //@version=5
-indicator(title="维加斯隧道交易策略", shorttitle="维加斯隧道交易策略", overlay=true)
-// === 可调参数 ===
-emaFilterPeriod = input.int(12, "过滤线")
-emaMid1Period = input.int(144, "中短期隧道上轨")
-emaMid2Period = input.int(169, "中短期隧道下轨")
-emaLong1Period = input.int(576, "长期隧道上轨")
-emaLong2Period = input.int(676, "长期隧道下轨")
-fundSettlementDays = input.int(1, "资金交割日 (N个交易日后)")
+indicator(title=双均线交易指标, shorttitle="双均线交易指标", overlay=true)
+// === 参数输入 ===
+lenSMA1 = input.int(20, title = 'SMA1')
+lenEMA1 = input.int(20, title = 'EMA1')
+lenSMA2 = input.int(60, title = 'SMA2')
+lenEMA2 = input.int(60, title = 'EMA2')
+lenSMA3 = input.int(120, title = 'SMA3')
+lenEMA3 = input.int(120, title = 'EMA3')
 
-// === 计算EMA ===
-emaFilter = ta.ema(close, emaFilterPeriod)
-emaMid1 = ta.ema(close, emaMid1Period)
-emaMid2 = ta.ema(close, emaMid2Period)
-emaLong1 = ta.ema(close, emaLong1Period)
-emaLong2 = ta.ema(close, emaLong2Period)
+// === 均线计算 ===
+sma1 = ta.sma(close, lenSMA1)
+ema1 = ta.ema(close, lenEMA1)
+sma2 = ta.sma(close, lenSMA2)
+ema2 = ta.ema(close, lenEMA2)
+sma3 = ta.sma(close, lenSMA3)
+ema3 = ta.ema(close, lenEMA3)
 
-// === 用户输入颜色 ===
-emaFilterColor = input.color(color.white, "过滤线颜色")
-midLongColorInput = input.color(color.aqua, "中短期多头")
-midShortColorInput = input.color(color.orange, "中短期空头")
-longLongColorInput = input.color(color.green, "长期多头")
-longShortColorInput = input.color(color.red, "长期空头")
+// === 颜色定义 ===
+sma1Color = color.rgb(255, 230, 100) // 浅黄
+ema1Color = color.rgb(200, 160, 0) // 深黄
+sma2Color = color.rgb(120, 200, 255) // 浅蓝
+ema2Color = color.rgb(0, 80, 200) // 深蓝
+sma3Color = color.rgb(255, 150, 150) // 浅红
+ema3Color = color.rgb(223, 20, 241) // 深红
 
-// === 添加透明度用于隧道填充 ===
-midLongColor = color.new(midLongColorInput, 40)
-midShortColor = color.new(midShortColorInput, 40)
-longLongColor = color.new(longLongColorInput, 40)
-longShortColor = color.new(longShortColorInput, 40)
-
-// === 绘制EMA线 ===
-plot(emaFilter, color=emaFilterColor, title="过滤线")
-plot_emaMid1 = plot(emaMid1, color=midLongColorInput, title="中短期上轨")
-plot_emaMid2 = plot(emaMid2, color=midShortColorInput, title="中短期下轨")
-plot_emaLong1 = plot(emaLong1, color=longLongColorInput, title="长期上轨")
-plot_emaLong2 = plot(emaLong2, color=longShortColorInput, title="长期下轨")
-
-// === 隧道趋势判定与填充 ===
-isMidUp = emaMid1 > emaMid2
-fillMidColor = isMidUp ? midLongColor : midShortColor
-fill(plot_emaMid1, plot_emaMid2, color=fillMidColor, title="中短期隧道")
-
-isLongUp = emaLong1 > emaLong2
-fillLongColor = isLongUp ? longLongColor : longShortColor
-fill(plot_emaLong1, plot_emaLong2, color=fillLongColor, title="长期隧道")
+// === 绘制均线 ===
+plot(sma1, color = sma1Color, title = 'SMA1', display = display.none)
+plot(ema1, color = ema1Color, title = 'EMA1')
+plot(sma2, color = sma2Color, title = 'SMA2', display = display.none)
+plot(ema2, color = ema2Color, title = 'EMA2')
+plot(sma3, color = sma3Color, title = 'SMA3', display = display.none)
+plot(ema3, color = ema3Color, title = 'EMA3', display = display.none)

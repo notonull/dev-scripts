@@ -1,0 +1,300 @@
+//@version=5
+indicator("AI顶底探测", shorttitle="AI顶底", overlay=false, max_bars_back=500)
+
+// === 参数输入 ===
+// 敏感度参数
+sensitivity = input.int(5, "敏感度", minval=1, maxval=10, tooltip="数值越小越敏感，越容易出现信号")
+confirmBars = input.int(3, "确认K线数", minval=1, maxval=10, tooltip="需要多少根K线确认信号")
+
+// 技术指标参数
+rsiLength = input.int(14, "RSI周期", minval=5, maxval=50)
+macdFast = input.int(12, "MACD快线", minval=5, maxval=20)
+macdSlow = input.int(26, "MACD慢线", minval=20, maxval=50)
+macdSignal = input.int(9, "MACD信号线", minval=5, maxval=20)
+volLength = input.int(20, "成交量均线", minval=10, maxval=50)
+
+// 显示选项
+showTop = input.bool(true, "显示顶部信号")
+showBottom = input.bool(true, "显示底部信号")
+showLabels = input.bool(true, "显示文字标签")
+showBars = input.bool(true, "显示柱状图")
+
+// === 核心技术指标计算 ===
+// RSI指标
+rsi = ta.rsi(close, rsiLength)
+
+// MACD指标
+[macdLine, signalLine, histogram] = ta.macd(close, macdFast, macdSlow, macdSignal)
+
+// 成交量指标
+avgVol = ta.sma(volume, volLength)
+volRatio = volume / avgVol
+
+// KDJ指标
+k = ta.stoch(close, high, low, 9)
+d = ta.sma(k, 3)
+j = 3 * k - 2 * d
+
+// === 同花顺AI顶底探测核心算法 ===
+// 多重时间框架分析
+shortTerm = 5   // 短期
+midTerm = 10    // 中期
+longTerm = 20   // 长期
+
+// 计算不同时间框架的趋势强度
+shortMA = ta.ema(close, shortTerm)
+midMA = ta.ema(close, midTerm)
+longMA = ta.ema(close, longTerm)
+
+// 趋势一致性判断
+trendUp = shortMA > midMA and midMA > longMA
+trendDown = shortMA < midMA and midMA < longMA
+
+// === 顶部识别算法 ===
+// 1. 价格结构顶部
+priceTop = high == ta.highest(high, sensitivity * 2) and high > high[1] and high > high[2]
+
+// 2. 技术指标超买
+rsiOverbought = rsi > 70 and rsi[1] > 70
+kdjOverbought = k > 80 and d > 80
+
+// 3. 背离信号
+priceDivTop = high > high[confirmBars] and rsi < rsi[confirmBars]
+macdDivTop = high > high[confirmBars] and macdLine < macdLine[confirmBars]
+
+// 4. 成交量萎缩
+volShrink = close > close[1] and volRatio < 0.8
+
+// 顶部信号综合判断
+topCondition1 = priceTop and (rsiOverbought or kdjOverbought)
+topCondition2 = priceDivTop and trendUp
+topCondition3 = macdDivTop and close > longMA
+topCondition4 = volShrink and rsi > 60
+
+topSignal = topCondition1 or topCondition2 or topCondition3 or topCondition4
+
+// === 底部识别算法 ===
+// 1. 价格结构底部
+priceBottom = low == ta.lowest(low, sensitivity * 2) and low < low[1] and low < low[2]
+
+// 2. 技术指标超卖
+rsiOversold = rsi < 30 and rsi[1] < 30
+kdjOversold = k < 20 and d < 20
+
+// 3. 背离信号
+priceDivBottom = low < low[confirmBars] and rsi > rsi[confirmBars]
+macdDivBottom = low < low[confirmBars] and macdLine > macdLine[confirmBars]
+
+// 4. 成交量放大
+volExpand = close < close[1] and volRatio > 1.5
+
+// 底部信号综合判断
+bottomCondition1 = priceBottom and (rsiOversold or kdjOversold)
+bottomCondition2 = priceDivBottom and trendDown
+bottomCondition3 = macdDivBottom and close < longMA
+bottomCondition4 = volExpand and rsi < 40
+
+bottomSignal = bottomCondition1 or bottomCondition2 or bottomCondition3 or bottomCondition4
+
+// === 信号强度计算 ===
+topStrength = 0
+if topCondition1
+    topStrength += 3
+if topCondition2
+    topStrength += 2
+if topCondition3
+    topStrength += 2
+if topCondition4
+    topStrength += 1
+
+bottomStrength = 0
+if bottomCondition1
+    bottomStrength += 3
+if bottomCondition2
+    bottomStrength += 2
+if bottomCondition3
+    bottomStrength += 2
+if bottomCondition4
+    bottomStrength += 1
+
+// === MACD样式的柱状图显示 ===
+// 零轴线
+hline(0, "零轴", color=color.gray, linestyle=hline.style_dashed)
+
+// === 同花顺AI顶底探测器正确逻辑 ===
+// 计算均线结构
+ma5 = ta.sma(close, 5)
+ma10 = ta.sma(close, 10)
+ma20 = ta.sma(close, 20)
+ma30 = ta.sma(close, 30)
+ma50 = ta.sma(close, 50)
+
+// 价格动量计算
+priceChange = (close - close[1]) / close[1] * 100
+volChange = (volume - ta.sma(volume, 20)) / ta.sma(volume, 20) * 100
+
+// === 五组合策略AI动能算法 ===
+
+// 策略1: 均线+动量（趋势清晰、简单）
+trendScore = 0.0
+momentumScore = 0.0
+
+// 均线多头排列评分
+if close > ma5 and ma5 > ma10 and ma10 > ma20 and ma20 > ma50
+    trendScore += 10.0  // 完美多头排列
+else if close > ma10 and ma10 > ma20
+    trendScore += 5.0   // 中期多头
+else if close > ma5
+    trendScore += 2.0   // 短期多头
+
+// 均线空头排列评分
+bearTrendScore = 0.0
+if close < ma5 and ma5 < ma10 and ma10 < ma20 and ma20 < ma50
+    bearTrendScore += 10.0  // 完美空头排列
+else if close < ma10 and ma10 < ma20
+    bearTrendScore += 5.0   // 中期空头
+else if close < ma5
+    bearTrendScore += 2.0   // 短期空头
+
+// 动量评分
+if priceChange > 2
+    momentumScore += priceChange * 2
+else if priceChange > 0
+    momentumScore += priceChange * 1
+else if priceChange < -2
+    momentumScore += math.abs(priceChange) * 1.5
+else
+    momentumScore += math.abs(priceChange) * 0.5
+
+// 策略2: 波动率+成交量（放量信号强）
+volatility = ta.atr(14) / close * 100
+volumeStrength = 0.0
+if volRatio > 2.0
+    volumeStrength += 8.0
+else if volRatio > 1.5
+    volumeStrength += 5.0
+else if volRatio > 1.2
+    volumeStrength += 2.0
+
+volatilityBonus = volatility > 2 ? volatility * 2 : volatility
+
+// 策略3: TD Sequential计数（1~9计数，顶底预警规则化）
+var int tdBuyCount = 0
+var int tdSellCount = 0
+
+// TD买入计数
+if close < close[4]
+    tdBuyCount := tdBuyCount >= 9 ? 1 : tdBuyCount + 1
+else
+    tdBuyCount := 0
+
+// TD卖出计数  
+if close > close[4]
+    tdSellCount := tdSellCount >= 9 ? 1 : tdSellCount + 1
+else
+    tdSellCount := 0
+
+tdBuySignal = tdBuyCount >= 8 ? (10 - tdBuyCount) * 3 : 0
+tdSellSignal = tdSellCount >= 8 ? (10 - tdSellCount) * 3 : 0
+
+// 策略4: 指标背离（提前发现潜在顶底）
+// RSI背离
+rsiDiv = 0.0
+if high > high[5] and rsi < rsi[5]
+    rsiDiv += 8.0  // 顶部背离
+if low < low[5] and rsi > rsi[5]
+    rsiDiv += 8.0  // 底部背离
+
+// MACD背离
+macdDiv = 0.0
+if high > high[5] and macdLine < macdLine[5]
+    macdDiv += 6.0  // MACD顶部背离
+if low < low[5] and macdLine > macdLine[5]
+    macdDiv += 6.0  // MACD底部背离
+
+// 策略5: RSI+KDJ组合确认
+rsiConfirm = 0.0
+if rsi > 70
+    rsiConfirm += (rsi - 70) * 0.3
+else if rsi < 30
+    rsiConfirm += (30 - rsi) * 0.3
+
+kdjConfirm = 0.0
+if k > 80 and d > 80
+    kdjConfirm += 5.0
+else if k < 20 and d < 20
+    kdjConfirm += 5.0
+
+// === 最终AI动能计算 ===
+// 红色柱子（多头动能）
+bullAI = trendScore + momentumScore + volumeStrength + volatilityBonus + tdBuySignal + (rsiDiv * 0.5) + (macdDiv * 0.5) + rsiConfirm + kdjConfirm
+upValue = math.max(bullAI, 1.0)
+
+// 紫色柱子（空头动能）  
+bearAI = bearTrendScore + momentumScore + volumeStrength + volatilityBonus + tdSellSignal + (rsiDiv * 0.5) + (macdDiv * 0.5) + rsiConfirm + kdjConfirm
+downValue = math.max(bearAI, 0.5)
+
+// === 筑底/筑顶信号检测 ===
+// 筑底信号：RSI超卖 + 价格低于多条均线 + 可能的背离
+bottomSignalStrength = 0.0
+if rsi < 30 and close < ma20 and close < ma50
+    bottomSignalStrength += 10.0
+if low == ta.lowest(low, 20) and rsi > rsi[5]  // 价格新低但RSI背离
+    bottomSignalStrength += 15.0
+if volChange > 50 and priceChange < -3  // 恐慌性下跌
+    bottomSignalStrength += 5.0
+
+// 筑顶信号：RSI超买 + 价格高于多条均线 + 可能的背离
+topSignalStrength = 0.0
+if rsi > 70 and close > ma20 and close > ma50
+    topSignalStrength += 10.0
+if high == ta.highest(high, 20) and rsi < rsi[5]  // 价格新高但RSI背离
+    topSignalStrength += 15.0
+if volChange > 50 and priceChange > 3 and rsi > 75  // 高位放量
+    topSignalStrength += 5.0
+
+// === 柱状图绘制 ===
+// 红色柱子：上涨动力
+plot(upValue, title="上涨动力", style=plot.style_histogram, linewidth=4, color=color.red)
+
+// 紫色柱子：下跌压力（负值显示）
+plot(-downValue, title="下跌压力", style=plot.style_histogram, linewidth=4, color=color.purple)
+
+// === 筑底/筑顶标记 ===
+// 绿色筑底信号
+plotshape(bottomSignalStrength > 15, title="筑底", location=location.bottom, color=color.green, style=shape.circle, size=size.small, text="筑底")
+
+// 青色筑顶信号  
+plotshape(topSignalStrength > 15, title="筑顶", location=location.top, color=color.aqua, style=shape.circle, size=size.small, text="筑顶")
+
+// === 数值显示表格（同花顺风格）===
+var table infoTable = table.new(position.top_right, 2, 5, bgcolor=color.new(color.white, 85), border_width=1)
+
+if barstate.islast
+    // 标题
+    table.cell(infoTable, 0, 0, "AI顶底探测", text_color=color.white, text_size=size.normal, bgcolor=color.new(color.blue, 20))
+    table.cell(infoTable, 1, 0, "", text_color=color.white, bgcolor=color.new(color.blue, 20))
+    
+    // 上涨动力数值
+    upText = upValue > 0.1 ? str.tostring(upValue, "#.###") : "0.000"
+    table.cell(infoTable, 0, 1, "上涨:", text_color=color.black)
+    table.cell(infoTable, 1, 1, upText, text_color=color.red)
+    
+    // 下跌压力数值
+    downText = downValue > 0.1 ? str.tostring(downValue, "#.###") : "0.000"
+    table.cell(infoTable, 0, 2, "下跌:", text_color=color.black)
+    table.cell(infoTable, 1, 2, downText, text_color=color.purple)
+    
+    // 筑底信号
+    bottomText = bottomSignalStrength > 15 ? str.tostring(bottomSignalStrength, "#.#") : "--"
+    table.cell(infoTable, 0, 3, "筑底:", text_color=color.black)
+    table.cell(infoTable, 1, 3, bottomText, text_color=color.green)
+    
+    // 筑顶信号
+    topText = topSignalStrength > 15 ? str.tostring(topSignalStrength, "#.#") : "--"
+    table.cell(infoTable, 0, 4, "筑顶:", text_color=color.black)
+    table.cell(infoTable, 1, 4, topText, text_color=color.aqua)
+
+// === 警报条件 ===
+alertcondition(bottomSignalStrength > 15, title="AI筑底信号", message="检测到筑底信号")
+alertcondition(topSignalStrength > 15, title="AI筑顶信号", message="检测到筑顶信号")

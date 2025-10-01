@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator(title="维加斯隧道交易策略", shorttitle="维加斯隧道交易策略", overlay=true)
 // === 可调参数 ===
 emaFilterPeriod = input.int(12, "过滤线")

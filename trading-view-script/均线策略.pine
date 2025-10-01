@@ -1,133 +1,199 @@
-//@version=5
-strategy("维加斯隧道交易策略", overlay=true, initial_capital=3000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0)
+//@version=6
+strategy('双均线交易策略', overlay = true, margin_long = 100, margin_short = 100, initial_capital = 3000, process_orders_on_close = true)
+// === 参数输入 ===
+lenSMA1 = input.int(20, title = 'SMA1')
+lenEMA1 = input.int(20, title = 'EMA1')
+lenSMA2 = input.int(60, title = 'SMA2')
+lenEMA2 = input.int(60, title = 'EMA2')
+lenSMA3 = input.int(120, title = 'SMA3')
+lenEMA3 = input.int(120, title = 'EMA3')
 
-// === 可调参数 ===
-emaFilterPeriod = input.int(12, "过滤线")
-emaMid1Period = input.int(144, "中短期隧道上轨")
-emaMid2Period = input.int(169, "中短期隧道下轨")
-emaLong1Period = input.int(576, "长期隧道上轨")
-emaLong2Period = input.int(676, "长期隧道下轨")
-fundSettlementDays = input.int(1, "资金交割日 (N个交易日后)")
+// === 均线计算 ===
+sma1 = ta.sma(close, lenSMA1)
+ema1 = ta.ema(close, lenEMA1)
+sma2 = ta.sma(close, lenSMA2)
+ema2 = ta.ema(close, lenEMA2)
+sma3 = ta.sma(close, lenSMA3)
+ema3 = ta.ema(close, lenEMA3)
 
-// === 计算EMA ===
-emaFilter = ta.ema(close, emaFilterPeriod)
-emaMid1 = ta.ema(close, emaMid1Period)
-emaMid2 = ta.ema(close, emaMid2Period)
-emaLong1 = ta.ema(close, emaLong1Period)
-emaLong2 = ta.ema(close, emaLong2Period)
+// === 颜色定义 ===
+sma1Color = color.rgb(255, 230, 100) // 浅黄
+ema1Color = color.rgb(200, 160, 0) // 深黄
+sma2Color = color.rgb(120, 200, 255) // 浅蓝
+ema2Color = color.rgb(0, 80, 200) // 深蓝
+sma3Color = color.rgb(255, 150, 150) // 浅红
+ema3Color = color.rgb(223, 20, 241) // 深红
 
-// === 用户输入颜色 ===
-emaFilterColor = input.color(color.white, "过滤线颜色")
-midLongColorInput = input.color(color.aqua, "中短期多头")
-midShortColorInput = input.color(color.orange, "中短期空头")
-longLongColorInput = input.color(color.green, "长期多头")
-longShortColorInput = input.color(color.red, "长期空头")
+// === 绘制均线 ===
+plot(sma1, color = sma1Color, title = 'SMA1', display = display.none)
+plot(ema1, color = ema1Color, title = 'EMA1')
+plot(sma2, color = sma2Color, title = 'SMA2', display = display.none)
+plot(ema2, color = ema2Color, title = 'EMA2')
+plot(sma3, color = sma3Color, title = 'SMA3', display = display.none)
+plot(ema3, color = ema3Color, title = 'EMA3', display = display.none)
 
-// === 添加透明度用于隧道填充 ===
-midLongColor = color.new(midLongColorInput, 40)
-midShortColor = color.new(midShortColorInput, 40)
-longLongColor = color.new(longLongColorInput, 40)
-longShortColor = color.new(longShortColorInput, 40)
 
-// === 绘制EMA线 ===
-plot(emaFilter, color=emaFilterColor, title="过滤线")
-plot_emaMid1 = plot(emaMid1, color=midLongColorInput, title="中短期上轨")
-plot_emaMid2 = plot(emaMid2, color=midShortColorInput, title="中短期下轨")
-plot_emaLong1 = plot(emaLong1, color=longLongColorInput, title="长期上轨")
-plot_emaLong2 = plot(emaLong2, color=longShortColorInput, title="长期下轨")
 
-// === 隧道趋势判定与填充 ===
-isMidUp = emaMid1 > emaMid2
-fillMidColor = isMidUp ? midLongColor : midShortColor
-fill(plot_emaMid1, plot_emaMid2, color=fillMidColor, title="中短期隧道")
 
-isLongUp = emaLong1 > emaLong2
-fillLongColor = isLongUp ? longLongColor : longShortColor
-fill(plot_emaLong1, plot_emaLong2, color=fillLongColor, title="长期隧道")
+// === 专业交易策略参数 ===
 
-// === 策略逻辑 ===
-// === 策略参数 ===
-initialPositionSize = input.float(0.3, "初始仓位比例", minval=0.1, maxval=1.0, step=0.1)
-addPositionSize = input.float(0.2, "加仓仓位比例", minval=0.05, maxval=0.5, step=0.05)
-maxPositionSize = input.float(1.0, "最大仓位比例", minval=0.5, maxval=2.0, step=0.1)
+// === 交易策略总开关 ===
+enableStrategy = input.bool(true, title = '启用交易策略')
 
-// === 交易信号 ===
-// 条件1：价格在中短期隧道上轨之上，长期趋势多头
-priceAboveMid = close > emaMid1
-trendLong = emaLong1 > emaLong2
-trendMid = emaMid1 > emaMid2
+// 策略快线选择
+strategyFast = input.string('EMA1', title = '策略快线', options = ['EMA1', 'SMA1', 'EMA2', 'SMA2', 'EMA3', 'SMA3'])
+// 策略慢线选择
+strategySlow = input.string('EMA2', title = '策略慢线', options = ['EMA1', 'SMA1', 'EMA2', 'SMA2', 'EMA3', 'SMA3'])
 
-// 开仓信号（第一次入场）
-// === 隧道上升方向判断 ===
-// 上升方向定义：当前EMA大于前一根K线EMA
-midUpTrend = emaMid1 > emaMid1[1] and emaMid2 > emaMid2[1]       // 中短期隧道上升
-longUpTrend = emaLong1 > emaLong1[1] and emaLong2 > emaLong2[1]   // 长期隧道上升
+// === 交易日期控制 ===
+startDate = input.time(timestamp("2025-01-01 00:00"), title = '交易开始日期')
+endDate = input.time(timestamp("2099-01-01 00:00"), title = '交易结束日期')
 
-// === 做多条件 ===
-canGoLong = midUpTrend and longUpTrend
+// === 交易日期检查 ===
+isInTradingPeriod = time >= startDate and time <= endDate
 
-// === 开仓信号（只做多，且满足隧道上升） ===
-firstEntrySignal = canGoLong and strategy.position_size == 0 and close > emaFilter  // 价格也在过滤线上方
 
-// 加仓信号（阳线回踩未破中短期下轨）
+// === 交易执行价格 ===
+entryTiming = input.string('收盘价', title = '开仓执行价格', options = ['开盘价', '收盘价', '盘中'])
+exitTiming = input.string('收盘价', title = '平仓执行价格', options = ['开盘价', '收盘价', '盘中'])
+
+// === 止盈止损参数 ===
+takeProfitPercent = input.float(0.0, title = '止盈(%)', minval = 0.0, maxval = 100.0, step = 0.1) / 100
+stopLossPercent = input.float(0.0, title = '止损(%)', minval = 0.0, maxval = 50.0, step = 0.1) / 100
+
+// === 根据选择获取对应的均线值 ===
+fastMA = strategyFast == 'EMA1' ? ema1 : strategyFast == 'SMA1' ? sma1 : strategyFast == 'EMA2' ? ema2 : strategyFast == 'SMA2' ? sma2 : strategyFast == 'EMA3' ? ema3 : sma3
+slowMA = strategySlow == 'EMA1' ? ema1 : strategySlow == 'SMA1' ? sma1 : strategySlow == 'EMA2' ? ema2 : strategySlow == 'SMA2' ? sma2 : strategySlow == 'EMA3' ? ema3 : sma3
+
+// === 核心信号识别 ===
+// 金叉死叉信号
+goldenCross = fastMA > slowMA and fastMA[1] <= slowMA[1] // 金叉：快线上穿慢线
+deathCross = fastMA < slowMA and fastMA[1] >= slowMA[1] // 死叉：快线下穿慢线
+
+// 趋势判断
+trendUp = fastMA > slowMA
+trendDown = fastMA < slowMA
+
+// === 止盈止损计算 ===
+var float entryPrice = na
+if strategy.position_size > 0 and na(entryPrice)
+    entryPrice := strategy.position_avg_price
+
+// 计算止盈止损水平
+takeProfitLevel = takeProfitPercent > 0 ? entryPrice * (1 + takeProfitPercent) : na
+stopLossLevel = stopLossPercent > 0 ? entryPrice * (1 - stopLossPercent) : na
+
+// 止盈止损信号
+takeProfitSignal = takeProfitPercent > 0 and strategy.position_size > 0 and not na(takeProfitLevel) and close >= takeProfitLevel
+stopLossSignal = stopLossPercent > 0 and strategy.position_size > 0 and not na(stopLossLevel) and close <= stopLossLevel
+
+// === 专业交易逻辑 ===
+// 1. 开仓信号（第一次金叉）
+firstEntrySignal = goldenCross and strategy.position_size == 0 and isInTradingPeriod
+
+// 2. 加仓信号（阳线 + 趋势向上）
+// 阳线判断：收盘价高于开盘价
 isBullish = close > open
-pullbackThreshold = 0.01  // 可调回踩幅度
-isPullback = close <= emaMid1 * (1 + pullbackThreshold) and close >= emaMid1
-pullbackSignal = isBullish and trendLong and trendMid and strategy.position_size > 0 and isPullback
 
-// 平仓信号（价格跌破中短期下轨或长期下轨）
-exitSignal = close < emaMid2 or close < emaLong2
+var lastAddPositionBar = 0
+// 当前价格相对于快线的偏离量，用于判断回踩
+pullbackThreshold = 0.01 // 可调回踩幅度，例如 1%
+// 判断回踩未破快线
+isPullback = close <= fastMA * (1 + pullbackThreshold) and close >= fastMA
+// 加仓条件：阳线 + 趋势向上 + 已有仓位 + 明确回踩快线
+pullbackSignal = isBullish and trendUp and strategy.position_size > 0 and isPullback and isInTradingPeriod
 
-// 重新入场信号（价格回到中短期上轨以上，长期趋势多头且空仓）
-reEntrySignal = priceAboveMid and trendLong and strategy.position_size == 0
+// 3. 减仓功能已移除
 
-// === 仓位管理执行 ===
-// 开仓
-if firstEntrySignal
-    strategy.entry("开仓", strategy.long, qty=strategy.equity * initialPositionSize / close, when=barstate.isconfirmed)
+// 4. 平仓信号（死叉或形态破快线）
+// 形态破快线判断：价格跌破快线
+breakFastLine = close < fastMA
 
-// 加仓
-if pullbackSignal
-    currentPosition = strategy.position_size
-    maxAllowedPosition = strategy.equity * maxPositionSize / close
-    if currentPosition < maxAllowedPosition
-        addQty = strategy.equity * addPositionSize / close
-        strategy.entry("加仓", strategy.long, qty=addQty, when=barstate.isconfirmed)
+// 连续阴线判断
+consecutiveBearish = 0
+for i = 0 to 2 by 1
+    if close[i] < open[i]
+        consecutiveBearish := consecutiveBearish + 1
+        consecutiveBearish
 
-// 平仓
-if exitSignal
-    strategy.close_all(when=barstate.isconfirmed, comment="平仓信号")
+exitSignal = (deathCross or breakFastLine or takeProfitSignal or stopLossSignal) and strategy.position_size > 0
 
-// 重新入场
-if reEntrySignal
-    strategy.entry("重新入场", strategy.long, qty=strategy.equity * initialPositionSize / close, when=barstate.isconfirmed)
+// 5. 重新入场信号（形态修复）
+// 当价格重新回到快线之上时，可以重新入场
+reEntrySignal = close > fastMA and strategy.position_size == 0 and trendUp and isInTradingPeriod
 
-// === 信号标记（优化，避免重复） ===
-var lastEntryBar = 0
-var lastAddBar = 0
-var lastExitBar = 0
-var lastReEntryBar = 0
+// === 交易执行价格判断 ===
+canEntry = entryTiming == '盘中' or (entryTiming == '开盘价' and barstate.isconfirmed) or (entryTiming == '收盘价' and barstate.isconfirmed)
+canExit = exitTiming == '盘中' or (exitTiming == '开盘价' and barstate.isconfirmed) or (exitTiming == '收盘价' and barstate.isconfirmed)
 
-// 开仓信号（只在持仓前触发一次）
-newEntrySignal = firstEntrySignal and bar_index != lastEntryBar
-if newEntrySignal
-    lastEntryBar := bar_index
-plotshape(newEntrySignal, title="开仓信号", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal)
+// 根据选择确定执行价格
+entryPrice_exec = entryTiming == '开盘价' ? open : entryTiming == '收盘价' ? close : close
+exitPrice_exec = exitTiming == '开盘价' ? open : exitTiming == '收盘价' ? close : close
 
-// 加仓信号（只在每次加仓时触发一次）
-newAddSignal = pullbackSignal and bar_index != lastAddBar
-if newAddSignal
-    lastAddBar := bar_index
-plotshape(newAddSignal, title="加仓信号", location=location.belowbar, color=color.blue, style=shape.circle, size=size.small)
+// === 交易执行 ===
+if enableStrategy
+    // 开仓
+    if firstEntrySignal and canEntry
+        if barstate.isconfirmed or entryTiming == '盘中'
+            strategy.entry('金叉开仓', strategy.long, qty = strategy.equity / entryPrice_exec)
+            entryPrice := entryPrice_exec
 
-// 平仓信号（只在持仓且首次触发时显示）
-newExitSignal = exitSignal and strategy.position_size > 0 and bar_index != lastExitBar
-if newExitSignal
-    lastExitBar := bar_index
-plotshape(newExitSignal, title="平仓信号", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.normal)
+    // 加仓
+    if pullbackSignal and canEntry
+        if barstate.isconfirmed or entryTiming == '盘中'
+            strategy.entry('阳线加仓', strategy.long, qty = strategy.equity * 0.2 / entryPrice_exec)
 
-// 重新入场信号（只在空仓时触发一次）
-newReEntrySignal = reEntrySignal and bar_index != lastReEntryBar
-if newReEntrySignal
-    lastReEntryBar := bar_index
-plotshape(newReEntrySignal, title="重入信号", location=location.belowbar, color=color.lime, style=shape.diamond, size=size.small)
+    // 平仓
+    if exitSignal and canExit
+        exitComment = takeProfitSignal ? '止盈平仓' : stopLossSignal ? '止损平仓' : deathCross ? '死叉平仓' : '破线平仓'
+        if barstate.isconfirmed or exitTiming == '盘中'
+            strategy.close_all(comment = exitComment)
+            entryPrice := na
+
+    // 重新入场
+    if reEntrySignal and canEntry
+        if barstate.isconfirmed or exitTiming == '盘中'
+            strategy.entry('形态修复入场', strategy.long, qty = strategy.equity / entryPrice_exec)
+            entryPrice := entryPrice_exec
+
+// === 信号标记 ===
+// 开仓信号
+plotshape(firstEntrySignal, title = '开仓信号', location = location.belowbar, color = color.green, style = shape.triangleup, size = size.normal)
+// 加仓信号
+plotshape(pullbackSignal, title = '加仓信号', location = location.belowbar, color = color.blue, style = shape.circle, size = size.small)
+// 平仓信号
+plotshape(exitSignal and not (takeProfitSignal or stopLossSignal), title = '平仓信号', location = location.abovebar, color = color.red, style = shape.triangledown, size = size.normal)
+// 止盈信号
+plotshape(takeProfitSignal, title = '止盈信号', location = location.abovebar, color = color.green, style = shape.flag, size = size.normal)
+// 止损信号
+plotshape(stopLossSignal, title = '止损信号', location = location.abovebar, color = color.red, style = shape.xcross, size = size.normal)
+// 重新入场信号
+plotshape(reEntrySignal, title = '重入信号', location = location.belowbar, color = color.lime, style = shape.diamond, size = size.small)
+
+// === 策略信息显示 ===
+var table infoTable = table.new(position.top_right, 2, 8, bgcolor = color.white, border_width = 1)
+if barstate.islast
+    table.cell(infoTable, 0, 0, '策略状态', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 0, '专业均线交叉策略', text_color = color.black, bgcolor = color.gray)
+
+    table.cell(infoTable, 0, 1, '趋势判断', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 1, trendUp ? '上涨' : '下跌', text_color = color.black, bgcolor = trendUp ? color.green : color.red)
+
+    table.cell(infoTable, 0, 2, '交叉信号', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 2, goldenCross ? '金叉' : deathCross ? '死叉' : '等待', text_color = color.black, bgcolor = goldenCross ? color.green : deathCross ? color.red : color.gray)
+
+    table.cell(infoTable, 0, 3, '策略快线', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 3, strategyFast, text_color = color.black, bgcolor = color.blue)
+
+    table.cell(infoTable, 0, 4, '策略慢线', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 4, strategySlow, text_color = color.black, bgcolor = color.orange)
+
+    table.cell(infoTable, 0, 5, '当前仓位', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 5, strategy.position_size > 0 ? '多头' : '空仓', text_color = color.black, bgcolor = strategy.position_size > 0 ? color.green : color.gray)
+
+    table.cell(infoTable, 0, 6, '仓位比例', text_color = color.black, bgcolor = color.gray)
+    positionRatio = strategy.position_size * close / strategy.equity
+    table.cell(infoTable, 1, 6, str.tostring(positionRatio * 100, '#.##') + '%', text_color = color.black, bgcolor = color.blue)
+
+    table.cell(infoTable, 0, 7, '形态状态', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 7, close > fastMA ? '形态完好' : '形态破快', text_color = color.black, bgcolor = close > fastMA ? color.green : color.red)
