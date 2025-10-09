@@ -19,6 +19,12 @@ enableVolumeBackground = input.bool(false, title = '启用量价关系')
 riseThreshold = 2.0  // 固定阈值2%
 fallThreshold = 2.0  // 固定阈值2%
 
+// === 标记颜色设置 ===
+riseMarkColor = input.color(color.new(#00C851, 20), title = '上涨标记颜色')
+fallMarkColor = input.color(color.new(#ff4444, 20), title = '下跌标记颜色') 
+normalMarkColor = input.color(color.new(#2196F3, 30), title = '普通标记颜色')
+markTextColor = input.color(color.white, title = '标记文字颜色')
+
 
 
 
@@ -180,63 +186,167 @@ if enableCandleMarking
     else
         candleTooltip += "\n📉 空头趋势 (快线<慢线)"
 
+// === 格式化函数定义 ===
+// 格式化成交量单位
+formatVolume(vol) =>
+    if vol >= 100000000
+        str.tostring(vol/100000000, "#.##") + "亿"
+    else if vol >= 10000
+        str.tostring(vol/10000, "#.##") + "万"
+    else
+        str.tostring(vol, "#")
+
+// 格式化价格单位
+formatPrice(price) =>
+    if price >= 1000
+        str.tostring(price, "#.##") + "元"
+    else if price >= 100
+        str.tostring(price, "#.###") + "元"
+    else if price >= 10
+        str.tostring(price, "#.####") + "元"
+    else
+        str.tostring(price, "#.#####") + "元"
+
 // === K线标记显示 ===
 // 在K线下方显示标记，鼠标悬停时显示详细提示框
 if enableCandleMarking
-    // 构建提示信息
-    tooltipText = "=== K线分析 ===\n"
-    tooltipText += "OHLC: " + str.tostring(open, "#.##") + " | " + str.tostring(high, "#.##") + " | " + str.tostring(low, "#.##") + " | " + str.tostring(close, "#.##") + "\n"
-    tooltipText += "涨跌幅: " + str.tostring(candleChangePercent, "#.##") + "%\n\n"
+    // 添加技术指标计算
+    macd_line = ta.ema(close, 12) - ta.ema(close, 26)
+    signal_line = ta.ema(macd_line, 9)
+    rsi = ta.rsi(close, 14)
+    k = ta.stoch(close, high, low, 14)
+    d = ta.sma(k, 3)
     
-    // 成交量分析
-    tooltipText += "=== 成交量分析 ===\n"
-    tooltipText += "当前量: " + str.tostring(volume, "#") + "\n"
-    tooltipText += "平均量: " + str.tostring(avgVolume, "#") + "\n"
-    tooltipText += "量能倍数: " + str.tostring(volume/avgVolume, "#.##") + "倍\n"
+    // K线形态识别
+    candlePattern = ""
+    if candleBodySize > avgBodySize * 2
+        if isObviousRise
+            candlePattern := "放量长阳线"
+        else if isObviousFall
+            candlePattern := "放量长阴线"
+        else
+            candlePattern := "大实体K线"
+    else if math.abs(candleChangePercent) < 0.3
+        candlePattern := "十字星"
+    else if close > open and (high - close) > (close - open) * 2
+        candlePattern := "上影线长"
+    else if close < open and (close - low) > (open - close) * 2
+        candlePattern := "锤头"
+    else if isObviousRise
+        candlePattern := "阳线"
+    else if isObviousFall
+        candlePattern := "阴线"
+    else
+        candlePattern := "普通K线"
+    
+    // 成交量描述
+    volumeDesc = ""
+    volumeChangePercent = volume[1] > 0 ? (volume - volume[1]) / volume[1] * 100 : 0
     
     if isHighVolume
-        tooltipText += "📊 高成交量 (>" + str.tostring(volumeHighThreshold, "#.#") + "倍)\n\n"
+        volumeDesc := "较昨日放量" + str.tostring(math.abs(volumeChangePercent), "#.1") + "%"
+        if isObviousRise
+            volumeDesc += "，价升量增"
+        else if isObviousFall
+            volumeDesc += "，价跌量增"
     else if isLowVolume
-        tooltipText += "📊 低成交量 (<" + str.tostring(volumeLowThreshold, "#.#") + "倍)\n\n"
+        volumeDesc := "缩量" + str.tostring(math.abs(volumeChangePercent), "#.1") + "%"
+        if isObviousFall
+            volumeDesc += "下跌"
     else
-        tooltipText += "📊 正常成交量\n\n"
+        volumeDesc := "成交量正常"
     
-    // 量价关系
-    tooltipText += "=== 量价关系 ===\n"
-    if isObviousRise and isHighVolume
-        tooltipText += "🟢 涨量配合 - 健康上涨\n"
+    // 均线结构描述
+    maStructure = ""
+    if ema1 > ema2 and ema2 > ema3
+        maStructure := "EMA20>EMA60>EMA120，形成多头排列"
+    else if ema1 < ema2 and ema2 < ema3
+        maStructure := "EMA20<EMA60<EMA120，形成空头排列"
+    else if close < ema1
+        maStructure := "跌破EMA20支撑"
+    else if close > ema2
+        maStructure := "突破EMA60阻力"
+    else
+        maStructure := "均线粘合，方向不明"
+    
+    // 技术指标描述
+    techIndicators = ""
+    if macd_line > signal_line and macd_line[1] <= signal_line[1]
+        techIndicators := "MACD金叉"
+    else if macd_line < signal_line and macd_line[1] >= signal_line[1]
+        techIndicators := "MACD死叉"
+    else if rsi > 50 and rsi[1] <= 50
+        techIndicators := "RSI回升至50上方"
+    else if rsi < 50 and rsi[1] >= 50
+        techIndicators := "RSI跌破50"
+    else if k > d and k[1] <= d[1]
+        techIndicators := "KDJ金叉"
+    else if k < d and k[1] >= d[1]
+        techIndicators := "KDJ死叉"
+    else
+        techIndicators := "技术指标平稳"
+    
+    // 支撑阻力位分析
+    supportLevel = math.min(low[1], low[2], low[3])  // 近期低点
+    resistanceLevel = math.max(high[1], high[2], high[3])  // 近期高点
+    
+    supportDesc = ""
+    resistanceDesc = ""
+    
+    if close <= supportLevel * 1.01  // 接近支撑位
+        supportDesc := "前低" + formatPrice(supportLevel) + "，EMA60支撑位"
+    else
+        supportDesc := "EMA20支撑" + formatPrice(ema1)
+    
+    if close >= resistanceLevel * 0.99  // 接近阻力位
+        resistanceDesc := "前高" + formatPrice(resistanceLevel) + "，EMA60阻力位"
+    else
+        resistanceDesc := "前高" + formatPrice(resistanceLevel)
+    
+    // 综合结论
+    conclusion = ""
+    if trendUp and isObviousRise and isHighVolume
+        conclusion := "短期趋势转强，若突破" + formatPrice(resistanceLevel) + "有望上攻"
+    else if trendDown and isObviousFall and isHighVolume
+        conclusion := "空头趋势加强，关注" + formatPrice(supportLevel) + "支撑是否有效"
     else if isObviousRise and isLowVolume
-        tooltipText += "🟡 涨缩量 - 需要警惕\n"
-    else if isObviousFall and isHighVolume
-        tooltipText += "🔴 跌量释放 - 空头发力\n"
+        conclusion := "反弹乏力，成交量不足，谨慎追高"
     else if isObviousFall and isLowVolume
-        tooltipText += "🟠 跌缩量 - 杀跌有限\n"
+        conclusion := "杀跌有限，关注" + formatPrice(supportLevel) + "支撑"
     else
-        tooltipText += "⚪ 正常震荡\n"
+        conclusion := "震荡整理，等待方向选择"
     
-    // 均线关系
-    tooltipText += "\n=== 均线关系 ===\n"
-    tooltipText += "EMA1(20): " + str.tostring(ema1, "#.####") + "\n"
-    tooltipText += "EMA2(60): " + str.tostring(ema2, "#.####") + "\n"
-    tooltipText += "与EMA1距离: " + str.tostring(((close - ema1) / ema1) * 100, "#.##") + "%\n"
-    tooltipText += "与EMA2距离: " + str.tostring(((close - ema2) / ema2) * 100, "#.##") + "%\n"
+    // 构建六维度提示信息
+    tooltipText = "一、K线形态：" + candlePattern + "\n"
+    tooltipText += "(涨跌幅：" + str.tostring(candleChangePercent, "+#.##;-#.##") + "%)\n\n"
     
-    // 趋势判断
-    tooltipText += "\n=== 趋势状态 ===\n"
-    tooltipText += trendUp ? "📈 多头趋势 (EMA1>EMA2)" : "📉 空头趋势 (EMA1<EMA2)"
+    tooltipText += "二、成交量：" + volumeDesc + "\n"
+    tooltipText += "(当前量：" + formatVolume(volume) + "，平均量：" + formatVolume(avgVolume) + ")\n\n"
+    
+    tooltipText += "三、均线结构：" + maStructure + "\n"
+    tooltipText += "(EMA20：" + formatPrice(ema1) + "，EMA60：" + formatPrice(ema2) + ")\n\n"
+    
+    tooltipText += "四、技术指标：" + techIndicators + "\n"
+    tooltipText += "(MACD：" + str.tostring(macd_line, "+#.####;-#.####") + "，RSI：" + str.tostring(rsi, "#.1") + ")\n\n"
+    
+    tooltipText += "五、支撑与阻力：\n"
+    tooltipText += "支撑位：" + supportDesc + "\n"
+    tooltipText += "阻力位：" + resistanceDesc + "\n\n"
+    
+    tooltipText += "六、综合结论：" + conclusion
     
     // 根据K线类型显示不同的标记
     if isObviousRise
         label.new(bar_index, low, text="📈", style=label.style_label_up, 
-                  color=color.new(color.green, 0), textcolor=color.white, 
+                  color=riseMarkColor, textcolor=markTextColor, 
                   size=size.small, tooltip=tooltipText)
     else if isObviousFall
         label.new(bar_index, low, text="📉", style=label.style_label_up, 
-                  color=color.new(color.red, 0), textcolor=color.white, 
+                  color=fallMarkColor, textcolor=markTextColor, 
                   size=size.small, tooltip=tooltipText)
     else if math.abs(candleChangePercent) > 1.0  // 对于波动超过1%的K线也显示标记
         label.new(bar_index, low, text="📊", style=label.style_label_up, 
-                  color=color.new(color.blue, 0), textcolor=color.white, 
+                  color=normalMarkColor, textcolor=markTextColor, 
                   size=size.tiny, tooltip=tooltipText)
 
 
