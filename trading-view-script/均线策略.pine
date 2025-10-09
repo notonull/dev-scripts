@@ -1,12 +1,26 @@
 //@version=6
 strategy('双均线交易策略', overlay = true, margin_long = 100, margin_short = 100, initial_capital = 3000, process_orders_on_close = true)
-// === 参数输入 ===
+
+// === 基础参数输入 ===
 lenSMA1 = input.int(20, title = 'SMA1')
 lenEMA1 = input.int(20, title = 'EMA1')
 lenSMA2 = input.int(60, title = 'SMA2')
 lenEMA2 = input.int(60, title = 'EMA2')
 lenSMA3 = input.int(120, title = 'SMA3')
 lenEMA3 = input.int(120, title = 'EMA3')
+
+// === 显示控制 ===
+showInfoTable = input.bool(false, title = '显示信息表格')
+enableMA = input.bool(true, title = '启用均线')
+
+// === K线标记设置 ===
+enableCandleMarking = input.bool(true, title = '启用K线标记')
+enableVolumeBackground = input.bool(false, title = '启用量价关系')
+riseThreshold = 2.0  // 固定阈值2%
+fallThreshold = 2.0  // 固定阈值2%
+
+
+
 
 // === 均线计算 ===
 sma1 = ta.sma(close, lenSMA1)
@@ -25,20 +39,216 @@ sma3Color = color.rgb(255, 150, 150) // 浅红
 ema3Color = color.rgb(223, 20, 241) // 深红
 
 // === 绘制均线 ===
-plot(sma1, color = sma1Color, title = 'SMA1', display = display.none)
-plot(ema1, color = ema1Color, title = 'EMA1')
-plot(sma2, color = sma2Color, title = 'SMA2', display = display.none)
-plot(ema2, color = ema2Color, title = 'EMA2')
-plot(sma3, color = sma3Color, title = 'SMA3', display = display.none)
-plot(ema3, color = ema3Color, title = 'EMA3', display = display.none)
+plot(enableMA ? sma1 : na, color = sma1Color, title = 'SMA1', display = display.none)
+plot(enableMA ? ema1 : na, color = ema1Color, title = 'EMA1')
+plot(enableMA ? sma2 : na, color = sma2Color, title = 'SMA2', display = display.none)
+plot(enableMA ? ema2 : na, color = ema2Color, title = 'EMA2')
+plot(enableMA ? sma3 : na, color = sma3Color, title = 'SMA3', display = display.none)
+plot(enableMA ? ema3 : na, color = ema3Color, title = 'EMA3', display = display.none)
+
+// === K线形态识别 ===
+// 计算K线涨跌幅
+candleChangePercent = (close - open) / open * 100
 
 
 
+// === 基础技术指标计算（用于量价关系） ===
+avgVolume = ta.sma(volume, 20)
 
+// 量价判断阈值
+volumeHighThreshold = 1.5  // 高成交量阈值倍数
+volumeLowThreshold = 0.7   // 低成交量阈值倍数
+
+// 量价背景判断
+isHighVolume = volume >= avgVolume * volumeHighThreshold
+isLowVolume = volume <= avgVolume * volumeLowThreshold
+
+// 原有逻辑保持
+isObviousRise = enableCandleMarking and candleChangePercent >= riseThreshold and close > open
+isObviousFall = enableCandleMarking and candleChangePercent <= -fallThreshold and close < open
+
+// 趋势判断（从策略部分提前到这里）
+fastMA = ema1  // 使用EMA1作为快线
+slowMA = ema2  // 使用EMA2作为慢线
+trendUp = fastMA > slowMA
+trendDown = fastMA < slowMA
+
+// 计算K线实体大小（用于标记强度判断）
+candleBodySize = math.abs(close - open)
+avgBodySize = ta.sma(candleBodySize, 20) // 20周期平均实体大小
+isStrongCandle = candleBodySize > avgBodySize * 1.5 // 实体大于平均值1.5倍视为强势K线
+
+// 计算背景渐变透明度（根据涨跌幅强度）
+riseIntensity = 0.0
+fallIntensity = 0.0
+
+if enableCandleMarking
+    if isObviousRise // 普通上涨
+        riseIntensity := math.round(math.min(math.abs(candleChangePercent) * 5, 35))
+    
+    if isObviousFall // 普通下跌
+        fallIntensity := math.round(math.min(math.abs(candleChangePercent) * 5, 35))
+
+// === K线形态标记 ===
+// K线背景渐变（根据涨跌幅强度显示）
+traditionalBgColor = riseIntensity > 0 ? color.new(color.green, 100 - riseIntensity) : 
+                     fallIntensity > 0 ? color.new(color.red, 100 - fallIntensity) : na
+
+// 量价关系背景（仅在启用时显示）
+var color volumePriceBgColor = na
+volumePriceBgColor := na
+if enableVolumeBackground and enableCandleMarking
+    if isObviousRise and isHighVolume
+        volumePriceBgColor := color.new(color.lime, 80)  // 涨量
+    else if isObviousFall and isHighVolume
+        volumePriceBgColor := color.new(color.red, 80)   // 跌量
+    else if isObviousRise and isLowVolume
+        volumePriceBgColor := color.new(color.orange, 85) // 涨缩量
+    else if isObviousFall and isLowVolume
+        volumePriceBgColor := color.new(color.purple, 85) // 跌缩量
+
+// 应用背景颜色
+// 当启用量价关系时，优先显示量价背景，否则显示传统涨跌背景
+finalBgColor = enableVolumeBackground ? (not na(volumePriceBgColor) ? volumePriceBgColor : traditionalBgColor) : na
+bgcolor(finalBgColor, title = 'K线背景')
+
+// === K线悬停信息功能 ===
+// 构建K线详细分析信息用于鼠标悬停显示
+var string candleTooltip = ""
+if enableCandleMarking
+    candleTooltip := "=== K线分析 ===\n"
+    
+    // 基础K线信息
+    candleTooltip += "开盘价: " + str.tostring(open, "#.####") + "\n"
+    candleTooltip += "最高价: " + str.tostring(high, "#.####") + "\n"
+    candleTooltip += "最低价: " + str.tostring(low, "#.####") + "\n"
+    candleTooltip += "收盘价: " + str.tostring(close, "#.####") + "\n"
+    candleTooltip += "涨跌幅: " + str.tostring(candleChangePercent, "#.##") + "%\n"
+    
+    // K线形态判断
+    if isObviousRise
+        candleTooltip += "\n📈 明显上涨信号"
+        candleTooltip += "\n涨幅超过 " + str.tostring(riseThreshold, "#.#") + "% 阈值"
+    else if isObviousFall
+        candleTooltip += "\n📉 明显下跌信号"
+        candleTooltip += "\n跌幅超过 " + str.tostring(fallThreshold, "#.#") + "% 阈值"
+    else
+        candleTooltip += "\n➡️ 正常波动"
+        candleTooltip += "\n波动幅度在正常范围内"
+    
+    // 成交量分析
+    candleTooltip += "\n\n=== 成交量分析 ==="
+    candleTooltip += "\n当前成交量: " + str.tostring(volume, "#") + "\n"
+    candleTooltip += "平均成交量: " + str.tostring(avgVolume, "#") + "\n"
+    candleTooltip += "量能倍数: " + str.tostring(volume/avgVolume, "#.##") + "倍\n"
+    
+    if isHighVolume
+        candleTooltip += "📊 高成交量 (>" + str.tostring(volumeHighThreshold, "#.#") + "倍平均量)"
+    else if isLowVolume
+        candleTooltip += "📊 低成交量 (<" + str.tostring(volumeLowThreshold, "#.#") + "倍平均量)"
+    else
+        candleTooltip += "📊 正常成交量"
+    
+    // 量价关系分析
+    candleTooltip += "\n\n=== 量价关系 ==="
+    if isObviousRise and isHighVolume
+        candleTooltip += "\n🟢 涨量配合 - 健康上涨"
+        candleTooltip += "\n价格上涨伴随成交量放大，多头力量强劲"
+    else if isObviousRise and isLowVolume
+        candleTooltip += "\n🟡 涨缩量 - 需要警惕"
+        candleTooltip += "\n价格上涨但成交量萎缩，上涨动能不足"
+    else if isObviousFall and isHighVolume
+        candleTooltip += "\n🔴 跌量释放 - 空头发力"
+        candleTooltip += "\n价格下跌伴随成交量放大，抛压沉重"
+    else if isObviousFall and isLowVolume
+        candleTooltip += "\n🟠 跌缩量 - 杀跌有限"
+        candleTooltip += "\n价格下跌但成交量萎缩，下跌动能减弱"
+    else
+        candleTooltip += "\n⚪ 正常震荡"
+        candleTooltip += "\n量价关系平稳，无明显异常"
+    
+    // 均线关系
+    candleTooltip += "\n\n=== 均线关系 ==="
+    candleTooltip += "\nEMA1(20): " + str.tostring(ema1, "#.####")
+    candleTooltip += "\nEMA2(60): " + str.tostring(ema2, "#.####")
+    candleTooltip += "\n价格与EMA1: " + (close > ema1 ? "上方 +" : "下方 ") + str.tostring(((close - ema1) / ema1) * 100, "#.##") + "%"
+    candleTooltip += "\n价格与EMA2: " + (close > ema2 ? "上方 +" : "下方 ") + str.tostring(((close - ema2) / ema2) * 100, "#.##") + "%"
+    
+    // 趋势判断
+    if trendUp
+        candleTooltip += "\n📈 多头趋势 (快线>慢线)"
+    else
+        candleTooltip += "\n📉 空头趋势 (快线<慢线)"
+
+// === K线标记显示 ===
+// 在K线下方显示标记，鼠标悬停时显示详细提示框
+if enableCandleMarking
+    // 构建提示信息
+    tooltipText = "=== K线分析 ===\n"
+    tooltipText += "OHLC: " + str.tostring(open, "#.##") + " | " + str.tostring(high, "#.##") + " | " + str.tostring(low, "#.##") + " | " + str.tostring(close, "#.##") + "\n"
+    tooltipText += "涨跌幅: " + str.tostring(candleChangePercent, "#.##") + "%\n\n"
+    
+    // 成交量分析
+    tooltipText += "=== 成交量分析 ===\n"
+    tooltipText += "当前量: " + str.tostring(volume, "#") + "\n"
+    tooltipText += "平均量: " + str.tostring(avgVolume, "#") + "\n"
+    tooltipText += "量能倍数: " + str.tostring(volume/avgVolume, "#.##") + "倍\n"
+    
+    if isHighVolume
+        tooltipText += "📊 高成交量 (>" + str.tostring(volumeHighThreshold, "#.#") + "倍)\n\n"
+    else if isLowVolume
+        tooltipText += "📊 低成交量 (<" + str.tostring(volumeLowThreshold, "#.#") + "倍)\n\n"
+    else
+        tooltipText += "📊 正常成交量\n\n"
+    
+    // 量价关系
+    tooltipText += "=== 量价关系 ===\n"
+    if isObviousRise and isHighVolume
+        tooltipText += "🟢 涨量配合 - 健康上涨\n"
+    else if isObviousRise and isLowVolume
+        tooltipText += "🟡 涨缩量 - 需要警惕\n"
+    else if isObviousFall and isHighVolume
+        tooltipText += "🔴 跌量释放 - 空头发力\n"
+    else if isObviousFall and isLowVolume
+        tooltipText += "🟠 跌缩量 - 杀跌有限\n"
+    else
+        tooltipText += "⚪ 正常震荡\n"
+    
+    // 均线关系
+    tooltipText += "\n=== 均线关系 ===\n"
+    tooltipText += "EMA1(20): " + str.tostring(ema1, "#.####") + "\n"
+    tooltipText += "EMA2(60): " + str.tostring(ema2, "#.####") + "\n"
+    tooltipText += "与EMA1距离: " + str.tostring(((close - ema1) / ema1) * 100, "#.##") + "%\n"
+    tooltipText += "与EMA2距离: " + str.tostring(((close - ema2) / ema2) * 100, "#.##") + "%\n"
+    
+    // 趋势判断
+    tooltipText += "\n=== 趋势状态 ===\n"
+    tooltipText += trendUp ? "📈 多头趋势 (EMA1>EMA2)" : "📉 空头趋势 (EMA1<EMA2)"
+    
+    // 根据K线类型显示不同的标记
+    if isObviousRise
+        label.new(bar_index, low, text="📈", style=label.style_label_up, 
+                  color=color.new(color.green, 0), textcolor=color.white, 
+                  size=size.small, tooltip=tooltipText)
+    else if isObviousFall
+        label.new(bar_index, low, text="📉", style=label.style_label_up, 
+                  color=color.new(color.red, 0), textcolor=color.white, 
+                  size=size.small, tooltip=tooltipText)
+    else if math.abs(candleChangePercent) > 1.0  // 对于波动超过1%的K线也显示标记
+        label.new(bar_index, low, text="📊", style=label.style_label_up, 
+                  color=color.new(color.blue, 0), textcolor=color.white, 
+                  size=size.tiny, tooltip=tooltipText)
+
+
+// ===================================================
 // === 专业交易策略参数 ===
+// ===================================================
 
 // === 交易策略总开关 ===
 enableStrategy = input.bool(true, title = '启用交易策略')
+
+// === 交易方向设置 ===
+tradeDirection = input.string('看多', title = '交易方向', options = ['看多', '看空', '所有'])
 
 // 策略快线选择
 strategyFast = input.string('EMA1', title = '策略快线', options = ['EMA1', 'SMA1', 'EMA2', 'SMA2', 'EMA3', 'SMA3'])
@@ -57,41 +267,68 @@ isInTradingPeriod = time >= startDate and time <= endDate
 entryTiming = input.string('收盘价', title = '开仓执行价格', options = ['开盘价', '收盘价', '盘中'])
 exitTiming = input.string('收盘价', title = '平仓执行价格', options = ['开盘价', '收盘价', '盘中'])
 
-// === 止盈止损参数 ===
-takeProfitPercent = input.float(0.0, title = '止盈(%)', minval = 0.0, maxval = 100.0, step = 0.1) / 100
-stopLossPercent = input.float(0.0, title = '止损(%)', minval = 0.0, maxval = 50.0, step = 0.1) / 100
+// === 缓冲区设置 ===
+bufferValue = input.float(0.0, title = '缓冲区数值', minval = 0.0, maxval = 50.0, step = 0.1, tooltip = '开仓后在此区间内不执行形态修复和平仓信号')
+bufferUnit = input.string('%', title = '缓冲区单位', options = ['%', '价格'])
 
-// === 根据选择获取对应的均线值 ===
-fastMA = strategyFast == 'EMA1' ? ema1 : strategyFast == 'SMA1' ? sma1 : strategyFast == 'EMA2' ? ema2 : strategyFast == 'SMA2' ? sma2 : strategyFast == 'EMA3' ? ema3 : sma3
-slowMA = strategySlow == 'EMA1' ? ema1 : strategySlow == 'SMA1' ? sma1 : strategySlow == 'EMA2' ? ema2 : strategySlow == 'SMA2' ? sma2 : strategySlow == 'EMA3' ? ema3 : sma3
+// === 根据选择获取对应的均线值（用于策略交易） ===
+strategyFastMA = strategyFast == 'EMA1' ? ema1 : strategyFast == 'SMA1' ? sma1 : strategyFast == 'EMA2' ? ema2 : strategyFast == 'SMA2' ? sma2 : strategyFast == 'EMA3' ? ema3 : sma3
+strategySlowMA = strategySlow == 'EMA1' ? ema1 : strategySlow == 'SMA1' ? sma1 : strategySlow == 'EMA2' ? ema2 : strategySlow == 'SMA2' ? sma2 : strategySlow == 'EMA3' ? ema3 : sma3
 
 // === 核心信号识别 ===
 // 金叉死叉信号
-goldenCross = fastMA > slowMA and fastMA[1] <= slowMA[1] // 金叉：快线上穿慢线
-deathCross = fastMA < slowMA and fastMA[1] >= slowMA[1] // 死叉：快线下穿慢线
+goldenCross = strategyFastMA > strategySlowMA and strategyFastMA[1] <= strategySlowMA[1] // 金叉：快线上穿慢线
+deathCross = strategyFastMA < strategySlowMA and strategyFastMA[1] >= strategySlowMA[1] // 死叉：快线下穿慢线
 
-// 趋势判断
-trendUp = fastMA > slowMA
-trendDown = fastMA < slowMA
+// 策略趋势判断
+strategyTrendUp = strategyFastMA > strategySlowMA
+strategyTrendDown = strategyFastMA < strategySlowMA
 
-// === 止盈止损计算 ===
-var float entryPrice = na
-if strategy.position_size > 0 and na(entryPrice)
-    entryPrice := strategy.position_avg_price
+// === 交易执行价格计算 ===
+entryPrice_exec = entryTiming == '开盘价' ? open : entryTiming == '收盘价' ? close : close
 
-// 计算止盈止损水平
-takeProfitLevel = takeProfitPercent > 0 ? entryPrice * (1 + takeProfitPercent) : na
-stopLossLevel = stopLossPercent > 0 ? entryPrice * (1 - stopLossPercent) : na
+// === 缓冲区计算 ===
+var float bufferEntryPrice = na
 
-// 止盈止损信号
-takeProfitSignal = takeProfitPercent > 0 and strategy.position_size > 0 and not na(takeProfitLevel) and close >= takeProfitLevel
-stopLossSignal = stopLossPercent > 0 and strategy.position_size > 0 and not na(stopLossLevel) and close <= stopLossLevel
+// 记录真实开仓价格（使用策略的平均开仓价格）
+if strategy.position_size[1] == 0 and strategy.position_size != 0
+    bufferEntryPrice := strategy.position_avg_price
+
+// 重置缓冲区（平仓时）
+if strategy.position_size == 0
+    bufferEntryPrice := na
+
+// 计算缓冲区设置
+var float bufferUpperBound = na
+var float bufferLowerBound = na
+var bool bufferEnabled = false
+
+if bufferValue > 0 and not na(bufferEntryPrice)
+    if bufferUnit == '%'
+        // 百分比模式
+        bufferPercent = bufferValue / 100
+        bufferUpperBound := bufferEntryPrice * (1 + bufferPercent)
+        bufferLowerBound := bufferEntryPrice * (1 - bufferPercent)
+    else
+        // 价格模式
+        bufferUpperBound := bufferEntryPrice + bufferValue
+        bufferLowerBound := bufferEntryPrice - bufferValue
+    bufferEnabled := true
+else
+    bufferUpperBound := na
+    bufferLowerBound := na
+    bufferEnabled := false
+
+// 判断是否在缓冲区内
+inBufferZone = bufferEnabled and not na(bufferEntryPrice) and close >= bufferLowerBound and close <= bufferUpperBound
+
 
 // === 专业交易逻辑 ===
-// 1. 开仓信号（第一次金叉）
-firstEntrySignal = goldenCross and strategy.position_size == 0 and isInTradingPeriod
+// === 做多信号 ===
+// 1. 做多开仓信号（第一次金叉）
+longEntrySignal = goldenCross and strategy.position_size == 0 and isInTradingPeriod
 
-// 2. 加仓信号（阳线 + 趋势向上）
+// 2. 做多加仓信号（阳线 + 趋势向上）
 // 阳线判断：收盘价高于开盘价
 isBullish = close > open
 
@@ -99,101 +336,261 @@ var lastAddPositionBar = 0
 // 当前价格相对于快线的偏离量，用于判断回踩
 pullbackThreshold = 0.01 // 可调回踩幅度，例如 1%
 // 判断回踩未破快线
-isPullback = close <= fastMA * (1 + pullbackThreshold) and close >= fastMA
-// 加仓条件：阳线 + 趋势向上 + 已有仓位 + 明确回踩快线
-pullbackSignal = isBullish and trendUp and strategy.position_size > 0 and isPullback and isInTradingPeriod
+isPullback = close <= strategyFastMA * (1 + pullbackThreshold) and close >= strategyFastMA
+// 加仓条件：阳线 + 趋势向上 + 已有多头仓位 + 明确回踩快线
+longAddSignal = isBullish and strategyTrendUp and strategy.position_size > 0 and isPullback and isInTradingPeriod
 
-// 3. 减仓功能已移除
-
-// 4. 平仓信号（死叉或形态破快线）
+// 3. 做多平仓信号（死叉或形态破快线）
 // 形态破快线判断：价格跌破快线
-breakFastLine = close < fastMA
+breakFastLine = close < strategyFastMA
+// 基础平仓信号（缓冲区内不执行）
+longExitSignal = (deathCross or breakFastLine) and strategy.position_size > 0 and not inBufferZone
 
-// 连续阴线判断
-consecutiveBearish = 0
-for i = 0 to 2 by 1
-    if close[i] < open[i]
-        consecutiveBearish := consecutiveBearish + 1
-        consecutiveBearish
+// 4. 做多重新入场信号（形态修复）
+// 当价格重新回到快线之上时，可以重新入场（缓冲区内不执行）
+longReEntrySignal = close > strategyFastMA and strategy.position_size == 0 and strategyTrendUp and isInTradingPeriod and not inBufferZone
 
-exitSignal = (deathCross or breakFastLine or takeProfitSignal or stopLossSignal) and strategy.position_size > 0
+// === 做空信号 ===
+// 1. 做空开仓信号（第一次死叉）
+shortEntrySignal = deathCross and strategy.position_size == 0 and isInTradingPeriod
 
-// 5. 重新入场信号（形态修复）
-// 当价格重新回到快线之上时，可以重新入场
-reEntrySignal = close > fastMA and strategy.position_size == 0 and trendUp and isInTradingPeriod
+// 2. 做空加仓信号（阴线 + 趋势向下）
+// 阴线判断：收盘价低于开盘价
+isBearish = close < open
+// 判断反弹未破快线
+isRebound = close >= strategyFastMA * (1 - pullbackThreshold) and close <= strategyFastMA
+// 加仓条件：阴线 + 趋势向下 + 已有空头仓位 + 明确反弹至快线
+shortAddSignal = isBearish and strategyTrendDown and strategy.position_size < 0 and isRebound and isInTradingPeriod
+
+// 3. 做空平仓信号（金叉或形态破快线）
+// 形态破快线判断（做空时为价格涨破快线）
+breakFastLineShort = close > strategyFastMA
+// 基础平仓信号（缓冲区内不执行）
+shortExitSignal = (goldenCross or breakFastLineShort) and strategy.position_size < 0 and not inBufferZone
+
+// 4. 做空重新入场信号（形态修复）
+// 当价格重新跌破快线时，可以重新做空入场（缓冲区内不执行）
+shortReEntrySignal = close < strategyFastMA and strategy.position_size == 0 and strategyTrendDown and isInTradingPeriod and not inBufferZone
+
+// === 兼容性变量（保持原有变量名） ===
+firstEntrySignal = longEntrySignal
+pullbackSignal = longAddSignal
+exitSignal = longExitSignal
+reEntrySignal = longReEntrySignal
 
 // === 交易执行价格判断 ===
 canEntry = entryTiming == '盘中' or (entryTiming == '开盘价' and barstate.isconfirmed) or (entryTiming == '收盘价' and barstate.isconfirmed)
 canExit = exitTiming == '盘中' or (exitTiming == '开盘价' and barstate.isconfirmed) or (exitTiming == '收盘价' and barstate.isconfirmed)
 
-// 根据选择确定执行价格
-entryPrice_exec = entryTiming == '开盘价' ? open : entryTiming == '收盘价' ? close : close
+// 根据选择确定平仓执行价格
 exitPrice_exec = exitTiming == '开盘价' ? open : exitTiming == '收盘价' ? close : close
 
 // === 交易执行 ===
 if enableStrategy
-    // 开仓
-    if firstEntrySignal and canEntry
-        if barstate.isconfirmed or entryTiming == '盘中'
-            strategy.entry('金叉开仓', strategy.long, qty = strategy.equity / entryPrice_exec)
-            entryPrice := entryPrice_exec
+    // === 做多交易执行 ===
+    if tradeDirection == '看多' or tradeDirection == '所有'
+        // 做多开仓
+        if longEntrySignal and canEntry
+            if barstate.isconfirmed or entryTiming == '盘中'
+                strategy.entry('金叉开仓', strategy.long, qty = strategy.equity / entryPrice_exec)
 
-    // 加仓
-    if pullbackSignal and canEntry
-        if barstate.isconfirmed or entryTiming == '盘中'
-            strategy.entry('阳线加仓', strategy.long, qty = strategy.equity * 0.2 / entryPrice_exec)
+        // 做多加仓
+        if longAddSignal and canEntry
+            if barstate.isconfirmed or entryTiming == '盘中'
+                strategy.entry('阳线加仓', strategy.long, qty = strategy.equity * 0.2 / entryPrice_exec)
 
-    // 平仓
-    if exitSignal and canExit
-        exitComment = takeProfitSignal ? '止盈平仓' : stopLossSignal ? '止损平仓' : deathCross ? '死叉平仓' : '破线平仓'
-        if barstate.isconfirmed or exitTiming == '盘中'
-            strategy.close_all(comment = exitComment)
-            entryPrice := na
+        // 做多平仓
+        if longExitSignal and canExit
+            exitComment = deathCross ? '死叉平仓' : '破线平仓'
+            if barstate.isconfirmed or exitTiming == '盘中'
+                strategy.close_all(comment = exitComment)
 
-    // 重新入场
-    if reEntrySignal and canEntry
-        if barstate.isconfirmed or exitTiming == '盘中'
-            strategy.entry('形态修复入场', strategy.long, qty = strategy.equity / entryPrice_exec)
-            entryPrice := entryPrice_exec
+        // 做多重新入场
+        if longReEntrySignal and canEntry
+            if barstate.isconfirmed or exitTiming == '盘中'
+                strategy.entry('形态修复入场', strategy.long, qty = strategy.equity / entryPrice_exec)
+
+    // === 做空交易执行 ===
+    if tradeDirection == '看空' or tradeDirection == '所有'
+        // 做空开仓
+        if shortEntrySignal and canEntry
+            if barstate.isconfirmed or entryTiming == '盘中'
+                strategy.entry('死叉开空', strategy.short, qty = strategy.equity / entryPrice_exec)
+
+        // 做空加仓
+        if shortAddSignal and canEntry
+            if barstate.isconfirmed or entryTiming == '盘中'
+                strategy.entry('阴线加空', strategy.short, qty = strategy.equity * 0.2 / entryPrice_exec)
+
+        // 做空平仓
+        if shortExitSignal and canExit
+            exitComment = goldenCross ? '金叉平仓' : '破线平仓'
+            if barstate.isconfirmed or exitTiming == '盘中'
+                strategy.close_all(comment = exitComment)
+
+        // 做空重新入场
+        if shortReEntrySignal and canEntry
+            if barstate.isconfirmed or exitTiming == '盘中'
+                strategy.entry('形态修复做空', strategy.short, qty = strategy.equity / entryPrice_exec)
 
 // === 信号标记 ===
-// 开仓信号
-plotshape(firstEntrySignal, title = '开仓信号', location = location.belowbar, color = color.green, style = shape.triangleup, size = size.normal)
-// 加仓信号
-plotshape(pullbackSignal, title = '加仓信号', location = location.belowbar, color = color.blue, style = shape.circle, size = size.small)
-// 平仓信号
-plotshape(exitSignal and not (takeProfitSignal or stopLossSignal), title = '平仓信号', location = location.abovebar, color = color.red, style = shape.triangledown, size = size.normal)
-// 止盈信号
-plotshape(takeProfitSignal, title = '止盈信号', location = location.abovebar, color = color.green, style = shape.flag, size = size.normal)
-// 止损信号
-plotshape(stopLossSignal, title = '止损信号', location = location.abovebar, color = color.red, style = shape.xcross, size = size.normal)
-// 重新入场信号
-plotshape(reEntrySignal, title = '重入信号', location = location.belowbar, color = color.lime, style = shape.diamond, size = size.small)
+// 做多信号标记
+plotshape(enableStrategy and longEntrySignal and (tradeDirection == '看多' or tradeDirection == '所有'), title = '做多开仓', location = location.belowbar, color = color.green, style = shape.triangleup, size = size.normal)
+plotshape(enableStrategy and longAddSignal and (tradeDirection == '看多' or tradeDirection == '所有'), title = '做多加仓', location = location.belowbar, color = color.blue, style = shape.circle, size = size.small)
+plotshape(enableStrategy and longExitSignal and (tradeDirection == '看多' or tradeDirection == '所有'), title = '做多平仓', location = location.abovebar, color = color.red, style = shape.triangledown, size = size.normal)
+plotshape(enableStrategy and longReEntrySignal and (tradeDirection == '看多' or tradeDirection == '所有'), title = '做多重入', location = location.belowbar, color = color.lime, style = shape.diamond, size = size.small)
+
+// 做空信号标记
+plotshape(enableStrategy and shortEntrySignal and (tradeDirection == '看空' or tradeDirection == '所有'), title = '做空开仓', location = location.abovebar, color = color.orange, style = shape.triangledown, size = size.normal)
+plotshape(enableStrategy and shortAddSignal and (tradeDirection == '看空' or tradeDirection == '所有'), title = '做空加仓', location = location.abovebar, color = color.purple, style = shape.circle, size = size.small)
+plotshape(enableStrategy and shortExitSignal and (tradeDirection == '看空' or tradeDirection == '所有'), title = '做空平仓', location = location.belowbar, color = color.yellow, style = shape.triangleup, size = size.normal)
+plotshape(enableStrategy and shortReEntrySignal and (tradeDirection == '看空' or tradeDirection == '所有'), title = '做空重入', location = location.abovebar, color = color.fuchsia, style = shape.diamond, size = size.small)
+
+// === 缓冲区可视化 ===
+// 缓冲区实体显示，只在价格未突破时显示
+bufferShow = bufferEnabled and not na(bufferUpperBound) and not na(bufferLowerBound) and not na(bufferEntryPrice) and close <= bufferUpperBound and close >= bufferLowerBound
+
+// 绘制缓冲区上边界线
+bufferUpperLine = bufferShow ? bufferUpperBound : na
+plot(bufferUpperLine, color = color.new(color.orange, 50), linewidth = 2, title = '缓冲区上边界', style = plot.style_line)
+
+// 绘制缓冲区下边界线  
+bufferLowerLine = bufferShow ? bufferLowerBound : na
+plot(bufferLowerLine, color = color.new(color.orange, 50), linewidth = 2, title = '缓冲区下边界', style = plot.style_line)
+
+// 绘制缓冲区中线（开仓基准价）
+bufferCenterLine = bufferShow ? bufferEntryPrice : na
+plot(bufferCenterLine, color = color.new(color.blue, 60), linewidth = 1, title = '开仓基准价', style = plot.style_line, linestyle = plot.linestyle_dashed)
+
+// 缓冲区透明实体背景
+fill(plot(bufferUpperLine, display = display.none), plot(bufferLowerLine, display = display.none), color = color.new(color.orange, 85), title = '缓冲区实体')
 
 // === 策略信息显示 ===
-var table infoTable = table.new(position.top_right, 2, 8, bgcolor = color.white, border_width = 1)
-if barstate.islast
+var table infoTable = showInfoTable ? table.new(position.top_right, 2, enableCandleMarking ? 17 : 12, bgcolor = color.white, border_width = 1) : na
+if barstate.islast and showInfoTable and not na(infoTable)
     table.cell(infoTable, 0, 0, '策略状态', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 0, '专业均线交叉策略', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 0, '双向均线交叉策略', text_color = color.black, bgcolor = color.gray)
 
-    table.cell(infoTable, 0, 1, '趋势判断', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 1, trendUp ? '上涨' : '下跌', text_color = color.black, bgcolor = trendUp ? color.green : color.red)
+    table.cell(infoTable, 0, 1, '交易方向', text_color = color.black, bgcolor = color.gray)
+    directionColor = tradeDirection == '看多' ? color.green : tradeDirection == '看空' ? color.red : color.blue
+    table.cell(infoTable, 1, 1, tradeDirection, text_color = color.black, bgcolor = directionColor)
 
-    table.cell(infoTable, 0, 2, '交叉信号', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 2, goldenCross ? '金叉' : deathCross ? '死叉' : '等待', text_color = color.black, bgcolor = goldenCross ? color.green : deathCross ? color.red : color.gray)
+    table.cell(infoTable, 0, 2, '趋势判断', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 2, strategyTrendUp ? '上涨' : '下跌', text_color = color.black, bgcolor = strategyTrendUp ? color.green : color.red)
 
-    table.cell(infoTable, 0, 3, '策略快线', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 3, strategyFast, text_color = color.black, bgcolor = color.blue)
+    table.cell(infoTable, 0, 3, '交叉信号', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 3, goldenCross ? '金叉' : deathCross ? '死叉' : '等待', text_color = color.black, bgcolor = goldenCross ? color.green : deathCross ? color.red : color.gray)
 
-    table.cell(infoTable, 0, 4, '策略慢线', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 4, strategySlow, text_color = color.black, bgcolor = color.orange)
+    table.cell(infoTable, 0, 4, '策略快线', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 4, strategyFast, text_color = color.black, bgcolor = color.blue)
 
-    table.cell(infoTable, 0, 5, '当前仓位', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 5, strategy.position_size > 0 ? '多头' : '空仓', text_color = color.black, bgcolor = strategy.position_size > 0 ? color.green : color.gray)
+    table.cell(infoTable, 0, 5, '策略慢线', text_color = color.black, bgcolor = color.gray)
+    table.cell(infoTable, 1, 5, strategySlow, text_color = color.black, bgcolor = color.orange)
 
-    table.cell(infoTable, 0, 6, '仓位比例', text_color = color.black, bgcolor = color.gray)
-    positionRatio = strategy.position_size * close / strategy.equity
-    table.cell(infoTable, 1, 6, str.tostring(positionRatio * 100, '#.##') + '%', text_color = color.black, bgcolor = color.blue)
+    table.cell(infoTable, 0, 6, '当前仓位', text_color = color.black, bgcolor = color.gray)
+    positionStatus = strategy.position_size > 0 ? '多头' : strategy.position_size < 0 ? '空头' : '空仓'
+    positionBgColor = strategy.position_size > 0 ? color.green : strategy.position_size < 0 ? color.red : color.gray
+    table.cell(infoTable, 1, 6, positionStatus, text_color = color.black, bgcolor = positionBgColor)
 
-    table.cell(infoTable, 0, 7, '形态状态', text_color = color.black, bgcolor = color.gray)
-    table.cell(infoTable, 1, 7, close > fastMA ? '形态完好' : '形态破快', text_color = color.black, bgcolor = close > fastMA ? color.green : color.red)
+    table.cell(infoTable, 0, 7, '仓位比例', text_color = color.black, bgcolor = color.gray)
+    positionRatio = math.abs(strategy.position_size * close / strategy.equity)
+    table.cell(infoTable, 1, 7, str.tostring(positionRatio * 100, '#.##') + '%', text_color = color.black, bgcolor = color.blue)
+
+    table.cell(infoTable, 0, 8, '形态状态', text_color = color.black, bgcolor = color.gray)
+    formationStatus = strategy.position_size > 0 ? (close > strategyFastMA ? '形态完好' : '形态破快') : strategy.position_size < 0 ? (close < strategyFastMA ? '形态完好' : '形态破快') : (close > strategyFastMA ? '多头形态' : '空头形态')
+    formationColor = strategy.position_size > 0 ? (close > strategyFastMA ? color.green : color.red) : strategy.position_size < 0 ? (close < strategyFastMA ? color.green : color.red) : (close > strategyFastMA ? color.lime : color.orange)
+    table.cell(infoTable, 1, 8, formationStatus, text_color = color.black, bgcolor = formationColor)
+
+    table.cell(infoTable, 0, 9, '缓冲区状态', text_color = color.black, bgcolor = color.gray)
+    bufferStatus = ''
+    if bufferEnabled and not na(bufferEntryPrice)
+        if inBufferZone
+            bufferStatus := '信号屏蔽中'
+        else
+            bufferStatus := '正常交易'
+    else if bufferValue > 0
+        bufferStatus := '等待开仓'
+    else
+        bufferStatus := '已关闭'
+    
+    bufferColor = bufferEnabled and not na(bufferEntryPrice) ? (inBufferZone ? color.red : color.green) : color.gray
+    table.cell(infoTable, 1, 9, bufferStatus, text_color = color.black, bgcolor = bufferColor)
+
+    table.cell(infoTable, 0, 10, '缓冲区设置', text_color = color.black, bgcolor = color.gray)
+    bufferSettingText = ''
+    if bufferEnabled and not na(bufferEntryPrice)
+        if bufferUnit == '%'
+            bufferSettingText := str.tostring(bufferValue, '#.#') + '% [' + str.tostring(bufferLowerBound, '#.##') + ' - ' + str.tostring(bufferUpperBound, '#.##') + ']'
+        else
+            bufferSettingText := str.tostring(bufferValue, '#.##') + ' [' + str.tostring(bufferLowerBound, '#.##') + ' - ' + str.tostring(bufferUpperBound, '#.##') + ']'
+    else
+        bufferSettingText := bufferValue > 0 ? '等待开仓' : '关闭'
+    table.cell(infoTable, 1, 10, bufferSettingText, text_color = color.black, bgcolor = color.blue)
+
+    table.cell(infoTable, 0, 11, 'K线分析', text_color = color.black, bgcolor = color.gray)
+    candleMarkText = ''
+    if enableCandleMarking
+        if isObviousRise
+            candleMarkText := '📈 ' + str.tostring(candleChangePercent, '#.##') + '% [详情]'
+        else if isObviousFall
+            candleMarkText := '📉 ' + str.tostring(candleChangePercent, '#.##') + '% [详情]'
+        else
+            candleMarkText := '➡️ ' + str.tostring(candleChangePercent, '#.##') + '% [详情]'
+    else
+        candleMarkText := '已关闭'
+    
+    candleMarkColor = enableCandleMarking ? (isObviousRise ? color.lime : isObviousFall ? color.red : color.gray) : color.gray
+    table.cell(infoTable, 1, 11, candleMarkText, text_color = color.black, bgcolor = candleMarkColor)
+    
+    // K线详细分析信息（当启用K线标记时显示更多行）
+    if enableCandleMarking
+        // 详细K线数据
+        table.cell(infoTable, 0, 12, 'OHLC数据', text_color = color.black, bgcolor = color.gray)
+        ohlcText = 'O:' + str.tostring(open, '#.##') + ' H:' + str.tostring(high, '#.##') + ' L:' + str.tostring(low, '#.##') + ' C:' + str.tostring(close, '#.##')
+        table.cell(infoTable, 1, 12, ohlcText, text_color = color.black, bgcolor = color.blue)
+        
+        // 量价关系分析
+        table.cell(infoTable, 0, 13, '量价关系', text_color = color.black, bgcolor = color.gray)
+        volumePriceText = ''
+        volumePriceColor = color.gray
+        if isObviousRise and isHighVolume
+            volumePriceText := '🟢 涨量配合-健康上涨'
+            volumePriceColor := color.lime
+        else if isObviousRise and isLowVolume
+            volumePriceText := '🟡 涨缩量-需要警惕'
+            volumePriceColor := color.yellow
+        else if isObviousFall and isHighVolume
+            volumePriceText := '🔴 跌量释放-空头发力'
+            volumePriceColor := color.red
+        else if isObviousFall and isLowVolume
+            volumePriceText := '🟠 跌缩量-杀跌有限'
+            volumePriceColor := color.orange
+        else
+            volumePriceText := '⚪ 正常震荡'
+        table.cell(infoTable, 1, 13, volumePriceText, text_color = color.black, bgcolor = volumePriceColor)
+        
+        // 成交量详细分析
+        table.cell(infoTable, 0, 14, '成交量详情', text_color = color.black, bgcolor = color.gray)
+        volumeDetailText = str.tostring(volume/avgVolume, '#.##') + '倍 ('
+        if isHighVolume
+            volumeDetailText += '放量>'  + str.tostring(volumeHighThreshold, '#.#') + '倍)'
+        else if isLowVolume
+            volumeDetailText += '缩量<' + str.tostring(volumeLowThreshold, '#.#') + '倍)'
+        else
+            volumeDetailText += '正常量)'
+        volumeColor = isHighVolume ? color.lime : isLowVolume ? color.orange : color.gray
+        table.cell(infoTable, 1, 14, volumeDetailText, text_color = color.black, bgcolor = volumeColor)
+        
+        // 均线关系分析
+        table.cell(infoTable, 0, 15, '均线关系', text_color = color.black, bgcolor = color.gray)
+        maRelationText = 'EMA1距离:' + str.tostring(((close - ema1) / ema1) * 100, '#.##') + '% | EMA2距离:' + str.tostring(((close - ema2) / ema2) * 100, '#.##') + '%'
+        maRelationColor = close > ema1 and close > ema2 ? color.lime : close < ema1 and close < ema2 ? color.red : color.yellow
+        table.cell(infoTable, 1, 15, maRelationText, text_color = color.black, bgcolor = maRelationColor)
+        
+        // 趋势状态
+        table.cell(infoTable, 0, 16, '趋势状态', text_color = color.black, bgcolor = color.gray)
+        trendText = trendUp ? '📈 多头趋势 (EMA1>EMA2)' : '📉 空头趋势 (EMA1<EMA2)'
+        trendColor = trendUp ? color.green : color.red
+        table.cell(infoTable, 1, 16, trendText, text_color = color.black, bgcolor = trendColor)
+
+
