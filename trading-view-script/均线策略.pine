@@ -12,6 +12,7 @@ lenEMA3 = input.int(120, title = 'EMA3')
 // === 显示控制 ===
 showInfoTable = input.bool(false, title = '显示信息表格')
 enableMA = input.bool(true, title = '启用均线')
+enableMagicNine = input.bool(false, title = '启用神奇九转')
 
 // === K线标记设置 ===
 enableCandleMarking = input.bool(true, title = '启用K线标记')
@@ -19,11 +20,6 @@ enableVolumeBackground = input.bool(false, title = '启用量价关系')
 riseThreshold = 2.0  // 固定阈值2%
 fallThreshold = 2.0  // 固定阈值2%
 
-// === 标记颜色设置 ===
-riseMarkColor = input.color(color.new(#00C851, 20), title = '上涨标记颜色')
-fallMarkColor = input.color(color.new(#ff4444, 20), title = '下跌标记颜色') 
-normalMarkColor = input.color(color.new(#2196F3, 30), title = '普通标记颜色')
-markTextColor = input.color(color.white, title = '标记文字颜色')
 
 
 
@@ -56,6 +52,149 @@ plot(enableMA ? ema3 : na, color = ema3Color, title = 'EMA3', display = display.
 // 计算K线涨跌幅
 candleChangePercent = (close - open) / open * 100
 
+// === 神奇九转TD Sequential参数 ===
+
+// === 神奇九转核心逻辑 ===
+var int TD = 0
+var int TS = 0
+var int TDUp = 0
+var int TDDn = 0
+var bool sell = false
+var bool buy = false
+var bool sellsetup = false
+var bool buysetup = false
+var bool sellovershoot = false
+var bool sellovershoot1 = false
+var bool sellovershoot2 = false
+var bool sellovershoot3 = false
+var bool buyovershoot = false
+var bool buyovershoot1 = false
+var bool buyovershoot2 = false
+var bool buyovershoot3 = false
+var float TDbuyh = na
+var float TDbuyl = na
+var float TDsellh = na
+var float TDselll = na
+
+// K线信息显示控制变量
+var bool showKlineInfo = false
+var string klineTooltip = ""
+var string candleTooltip = ""
+
+if enableMagicNine
+    // 基础计数逻辑
+    TD := close > close[4] ? nz(TD[1]) + 1 : 0
+    TS := close < close[4] ? nz(TS[1]) + 1 : 0
+
+    TDUp := TD - ta.valuewhen(TD < TD[1], TD, 1)
+    TDDn := TS - ta.valuewhen(TS < TS[1], TS, 1)
+
+    // Setup识别逻辑（johan.gradin算法）
+    priceflip = ta.barssince(close < close[4])
+    sellsetup := close > close[4] and priceflip >= 0
+    sell := sellsetup and priceflip == 9
+    sellovershoot := sellsetup and priceflip == 13
+    sellovershoot1 := sellsetup and priceflip == 14
+    sellovershoot2 := sellsetup and priceflip == 15
+    sellovershoot3 := sellsetup and priceflip == 16
+
+    priceflip1 = ta.barssince(close > close[4])
+    buysetup := close < close[4] and priceflip1 >= 0
+    buy := buysetup and priceflip1 == 9
+    buyovershoot := buysetup and priceflip1 == 13
+    buyovershoot1 := buysetup and priceflip1 == 14
+    buyovershoot2 := buysetup and priceflip1 == 15
+    buyovershoot3 := buysetup and priceflip1 == 16
+
+    // TD支撑阻力线
+    TDbuyh := ta.valuewhen(buy, high, 0)
+    TDbuyl := ta.valuewhen(buy, low, 0)
+    TDsellh := ta.valuewhen(sell, high, 0)
+    TDselll := ta.valuewhen(sell, low, 0)
+else
+    // 重置所有TD变量
+    TD := 0
+    TS := 0
+    TDUp := 0
+    TDDn := 0
+    sell := false
+    buy := false
+    sellsetup := false
+    buysetup := false
+    sellovershoot := false
+    sellovershoot1 := false
+    sellovershoot2 := false
+    sellovershoot3 := false
+    buyovershoot := false
+    buyovershoot1 := false
+    buyovershoot2 := false
+    buyovershoot3 := false
+    TDbuyh := na
+    TDbuyl := na
+    TDsellh := na
+    TDselll := na
+
+// TD K线着色（全局作用域）
+tdBarColor = color(na)
+if enableMagicNine
+    if sell
+        tdBarColor := #FF0000
+    else if buy
+        tdBarColor := #00FF00
+    else if sellovershoot
+        tdBarColor := #FF66A3
+    else if sellovershoot1
+        tdBarColor := #FF3385
+    else if sellovershoot2
+        tdBarColor := #FF0066
+    else if sellovershoot3
+        tdBarColor := #CC0052
+    else if buyovershoot
+        tdBarColor := #D6FF5C
+    else if buyovershoot1
+        tdBarColor := #D1FF47
+    else if buyovershoot2
+        tdBarColor := #B8E62E
+    else if buyovershoot3
+        tdBarColor := #8FB224
+
+barcolor(tdBarColor, title="TD Sequential K线着色")
+
+// === 神奇九转数字标记显示（智能颜色管理，失效数字变黑） ===
+if enableMagicNine
+    // 上涨数字标记
+    if TDUp >= 1 and TDUp <= 9 and TDUp[1] != TDUp
+        // 检测序列回退：当前数字小于前一个数字(序列被打断)
+        if TDUp < TDUp[1] and TDUp[1] >= 1 and TDUp[1] <= 9
+            // 首先显示失效的数字(灰色) - 从当前数字+1到前一个数字
+            if TDUp[1] > TDUp
+                for i = TDUp + 1 to TDUp[1]
+                    label.new(bar_index, high*1.015, text=str.tostring(i), style=label.style_none, 
+                              color=color.new(color.white, 100), textcolor=color.gray, size=size.small)
+            // 然后显示当前数字(绿色)
+            label.new(bar_index, high*1.015, text=str.tostring(TDUp), style=label.style_none, 
+                      color=color.new(color.white, 100), textcolor=color.green, size=size.small)
+        else
+            // 正常序列，显示绿色数字
+            label.new(bar_index, high*1.015, text=str.tostring(TDUp), style=label.style_none, 
+                      color=color.new(color.white, 100), textcolor=color.green, size=size.small)
+    
+    // 下跌数字标记
+    if TDDn >= 1 and TDDn <= 9 and TDDn[1] != TDDn
+        // 检测序列回退：当前数字小于前一个数字(序列被打断)
+        if TDDn < TDDn[1] and TDDn[1] >= 1 and TDDn[1] <= 9
+            // 首先显示失效的数字(灰色) - 从当前数字+1到前一个数字
+            if TDDn[1] > TDDn
+                for i = TDDn + 1 to TDDn[1]
+                    label.new(bar_index, low*0.985, text=str.tostring(i), style=label.style_none, 
+                              color=color.new(color.white, 100), textcolor=color.gray, size=size.small)
+            // 然后显示当前数字(红色)
+            label.new(bar_index, low*0.985, text=str.tostring(TDDn), style=label.style_none, 
+                      color=color.new(color.white, 100), textcolor=color.red, size=size.small)
+        else
+            // 正常序列，显示红色数字
+            label.new(bar_index, low*0.985, text=str.tostring(TDDn), style=label.style_none, 
+                      color=color.new(color.white, 100), textcolor=color.red, size=size.small)
 
 
 // === 基础技术指标计算（用于量价关系） ===
@@ -73,11 +212,23 @@ isLowVolume = volume <= avgVolume * volumeLowThreshold
 isObviousRise = enableCandleMarking and candleChangePercent >= riseThreshold and close > open
 isObviousFall = enableCandleMarking and candleChangePercent <= -fallThreshold and close < open
 
-// 趋势判断（从策略部分提前到这里）
-fastMA = ema1  // 使用EMA1作为快线
-slowMA = ema2  // 使用EMA2作为慢线
-trendUp = fastMA > slowMA
-trendDown = fastMA < slowMA
+// === K线信息标记（圆点+详细分析提示，智能位置避让） ===
+if isObviousRise
+    // 有九转时圆点放远一些，没有九转时圆点靠近
+    risePosition = enableMagicNine ? low*0.95 : low*0.985
+    label.new(bar_index, risePosition, text="●", style=label.style_none, 
+              color=color.new(color.white, 100), textcolor=color.new(color.green, 0), 
+              size=size.normal, xloc=xloc.bar_index, tooltip=candleTooltip)
+if isObviousFall
+    // 有九转时圆点放远一些，没有九转时圆点靠近
+    fallPosition = enableMagicNine ? high*1.05 : high*1.015
+    label.new(bar_index, fallPosition, text="●", style=label.style_none, 
+              color=color.new(color.white, 100), textcolor=color.new(color.red, 0), 
+              size=size.normal, xloc=xloc.bar_index, tooltip=candleTooltip)
+
+// 趋势判断（临时使用固定均线，稍后会更新为策略均线）
+trendUp = ema1 > ema2
+trendDown = ema1 < ema2
 
 // 计算K线实体大小（用于标记强度判断）
 candleBodySize = math.abs(close - open)
@@ -91,13 +242,13 @@ fallIntensity = 0.0
 if enableCandleMarking
     if isObviousRise // 普通上涨
         riseIntensity := math.round(math.min(math.abs(candleChangePercent) * 5, 35))
-    
+
     if isObviousFall // 普通下跌
         fallIntensity := math.round(math.min(math.abs(candleChangePercent) * 5, 35))
 
 // === K线形态标记 ===
 // K线背景渐变（根据涨跌幅强度显示）
-traditionalBgColor = riseIntensity > 0 ? color.new(color.green, 100 - riseIntensity) : 
+traditionalBgColor = riseIntensity > 0 ? color.new(color.green, 100 - riseIntensity) :
                      fallIntensity > 0 ? color.new(color.red, 100 - fallIntensity) : na
 
 // 量价关系背景（仅在启用时显示）
@@ -118,75 +269,7 @@ if enableVolumeBackground and enableCandleMarking
 finalBgColor = enableVolumeBackground ? (not na(volumePriceBgColor) ? volumePriceBgColor : traditionalBgColor) : na
 bgcolor(finalBgColor, title = 'K线背景')
 
-// === K线悬停信息功能 ===
-// 构建K线详细分析信息用于鼠标悬停显示
-var string candleTooltip = ""
-if enableCandleMarking
-    candleTooltip := "=== K线分析 ===\n"
-    
-    // 基础K线信息
-    candleTooltip += "开盘价: " + str.tostring(open, "#.####") + "\n"
-    candleTooltip += "最高价: " + str.tostring(high, "#.####") + "\n"
-    candleTooltip += "最低价: " + str.tostring(low, "#.####") + "\n"
-    candleTooltip += "收盘价: " + str.tostring(close, "#.####") + "\n"
-    candleTooltip += "涨跌幅: " + str.tostring(candleChangePercent, "#.##") + "%\n"
-    
-    // K线形态判断
-    if isObviousRise
-        candleTooltip += "\n📈 明显上涨信号"
-        candleTooltip += "\n涨幅超过 " + str.tostring(riseThreshold, "#.#") + "% 阈值"
-    else if isObviousFall
-        candleTooltip += "\n📉 明显下跌信号"
-        candleTooltip += "\n跌幅超过 " + str.tostring(fallThreshold, "#.#") + "% 阈值"
-    else
-        candleTooltip += "\n➡️ 正常波动"
-        candleTooltip += "\n波动幅度在正常范围内"
-    
-    // 成交量分析
-    candleTooltip += "\n\n=== 成交量分析 ==="
-    candleTooltip += "\n当前成交量: " + str.tostring(volume, "#") + "\n"
-    candleTooltip += "平均成交量: " + str.tostring(avgVolume, "#") + "\n"
-    candleTooltip += "量能倍数: " + str.tostring(volume/avgVolume, "#.##") + "倍\n"
-    
-    if isHighVolume
-        candleTooltip += "📊 高成交量 (>" + str.tostring(volumeHighThreshold, "#.#") + "倍平均量)"
-    else if isLowVolume
-        candleTooltip += "📊 低成交量 (<" + str.tostring(volumeLowThreshold, "#.#") + "倍平均量)"
-    else
-        candleTooltip += "📊 正常成交量"
-    
-    // 量价关系分析
-    candleTooltip += "\n\n=== 量价关系 ==="
-    if isObviousRise and isHighVolume
-        candleTooltip += "\n🟢 涨量配合 - 健康上涨"
-        candleTooltip += "\n价格上涨伴随成交量放大，多头力量强劲"
-    else if isObviousRise and isLowVolume
-        candleTooltip += "\n🟡 涨缩量 - 需要警惕"
-        candleTooltip += "\n价格上涨但成交量萎缩，上涨动能不足"
-    else if isObviousFall and isHighVolume
-        candleTooltip += "\n🔴 跌量释放 - 空头发力"
-        candleTooltip += "\n价格下跌伴随成交量放大，抛压沉重"
-    else if isObviousFall and isLowVolume
-        candleTooltip += "\n🟠 跌缩量 - 杀跌有限"
-        candleTooltip += "\n价格下跌但成交量萎缩，下跌动能减弱"
-    else
-        candleTooltip += "\n⚪ 正常震荡"
-        candleTooltip += "\n量价关系平稳，无明显异常"
-    
-    // 均线关系
-    candleTooltip += "\n\n=== 均线关系 ==="
-    candleTooltip += "\nEMA1(20): " + str.tostring(ema1, "#.####")
-    candleTooltip += "\nEMA2(60): " + str.tostring(ema2, "#.####")
-    candleTooltip += "\n价格与EMA1: " + (close > ema1 ? "上方 +" : "下方 ") + str.tostring(((close - ema1) / ema1) * 100, "#.##") + "%"
-    candleTooltip += "\n价格与EMA2: " + (close > ema2 ? "上方 +" : "下方 ") + str.tostring(((close - ema2) / ema2) * 100, "#.##") + "%"
-    
-    // 趋势判断
-    if trendUp
-        candleTooltip += "\n📈 多头趋势 (快线>慢线)"
-    else
-        candleTooltip += "\n📉 空头趋势 (快线<慢线)"
-
-// === 格式化函数定义 ===
+// === 格式化函数定义（提前定义） ===
 // 格式化成交量单位
 formatVolume(vol) =>
     if vol >= 100000000
@@ -207,6 +290,127 @@ formatPrice(price) =>
     else
         str.tostring(price, "#.#####") + "元"
 
+// === K线悬停信息功能 ===
+// 构建K线详细分析信息用于鼠标悬停显示
+if enableCandleMarking
+    candleTooltip := "=== K线分析 ===\n"
+
+    // 基础K线信息
+    candleTooltip += "开盘价: " + str.tostring(open, "#.####") + "\n"
+    candleTooltip += "最高价: " + str.tostring(high, "#.####") + "\n"
+    candleTooltip += "最低价: " + str.tostring(low, "#.####") + "\n"
+    candleTooltip += "收盘价: " + str.tostring(close, "#.####") + "\n"
+    candleTooltip += "涨跌幅: " + str.tostring(candleChangePercent, "#.##") + "%\n"
+
+    // K线类型描述
+    if isObviousRise
+        candleTooltip += "\n📈 明显上涨信号"
+        candleTooltip += "\n涨幅超过 " + str.tostring(riseThreshold, "#.#") + "% 阈值"
+    else if isObviousFall
+        candleTooltip += "\n📉 明显下跌信号"
+        candleTooltip += "\n跌幅超过 " + str.tostring(fallThreshold, "#.#") + "% 阈值"
+    else
+        candleTooltip += "\n➡️ 正常波动"
+        candleTooltip += "\n波动幅度在正常范围内"
+
+    // 成交量分析
+    candleTooltip += "\n\n=== 成交量分析 ==="
+    candleTooltip += "\n当前成交量: " + formatVolume(volume) + "\n"
+    candleTooltip += "平均成交量: " + formatVolume(avgVolume) + "\n"
+    candleTooltip += "量能倍数: " + str.tostring(volume/avgVolume, "#.##") + "倍\n"
+
+    if isHighVolume
+        candleTooltip += "📊 高成交量 (>" + str.tostring(volumeHighThreshold, "#.#") + "倍平均量)"
+    else if isLowVolume
+        candleTooltip += "📊 低成交量 (<" + str.tostring(volumeLowThreshold, "#.#") + "倍平均量)"
+    else
+        candleTooltip += "📊 正常成交量"
+
+    // 高级技术分析
+    candleTooltip += "\n\n=== 高级技术分析 ==="
+    
+    // 量能结构分析
+    candleTooltip += "\n【量能结构】："
+    if isObviousRise and isHighVolume and candleChangePercent < 1.0
+        candleTooltip += "滞涨放量"
+    else if isObviousFall and isLowVolume and candleChangePercent > -1.0
+        candleTooltip += "缩量筑底" 
+    else if isObviousRise and isHighVolume
+        candleTooltip += "放量突破"
+    else if isObviousFall and isHighVolume
+        candleTooltip += "放量破位"
+    else if isLowVolume
+        candleTooltip += "缩量盘整"
+    else
+        candleTooltip += "正常换手"
+    
+    // 动能指标分析
+    macd_line = ta.ema(close, 12) - ta.ema(close, 26)
+    signal_line = ta.ema(macd_line, 9)
+    macd_hist = macd_line - signal_line
+    
+    candleTooltip += "\n【动能指标】："
+    if macd_hist > 0 and macd_hist < macd_hist[1] and close > close[5] and macd_line < macd_line[5]
+        candleTooltip += "MACD顶背离"
+    else if macd_hist < 0 and macd_hist > macd_hist[1] and close < close[5] and macd_line > macd_line[5]
+        candleTooltip += "MACD底背离"
+    else if macd_hist > 0 and macd_hist > macd_hist[1]
+        candleTooltip += "MACD多头加速"
+    else if macd_hist < 0 and macd_hist < macd_hist[1]
+        candleTooltip += "MACD空头加速"
+    else
+        candleTooltip += "MACD震荡"
+    
+    // RSI分析
+    rsi = ta.rsi(close, 14)
+    candleTooltip += "\n【RSI】："
+    if rsi > 70
+        candleTooltip += "高位钝化(RSI:" + str.tostring(rsi, "#.1") + ")"
+    else if rsi < 30
+        candleTooltip += "低位反弹(RSI:" + str.tostring(rsi, "#.1") + ")"
+    else if rsi > 50
+        candleTooltip += "多头区域(RSI:" + str.tostring(rsi, "#.1") + ")"
+    else
+        candleTooltip += "空头区域(RSI:" + str.tostring(rsi, "#.1") + ")"
+    
+    // 资金流向分析(基于量价关系模拟)
+    candleTooltip += "\n【资金流向】："
+    if isObviousRise and isHighVolume
+        candleTooltip += "主力净流入"
+    else if isObviousFall and isHighVolume
+        candleTooltip += "主力净流出"
+    else if isObviousRise and isLowVolume
+        candleTooltip += "资金谨慎看多"
+    else if isObviousFall and isLowVolume
+        candleTooltip += "资金恐慌有限"
+    else
+        candleTooltip += "资金观望"
+    
+    // OBV分析(简化版)
+    candleTooltip += "\n【OBV】："
+    obvChange = close > close[1] ? volume : close < close[1] ? -volume : 0
+    obvTrend = ta.sma(obvChange, 5)
+    if math.abs(obvTrend) < volume * 0.1
+        candleTooltip += "横盘"
+    else if obvTrend > 0
+        candleTooltip += "翻升"
+    else
+        candleTooltip += "走弱"
+    
+    // 波动率分析(ATR)
+    atr = ta.atr(14)
+    atrChange = (atr - atr[1]) / atr[1] * 100
+    candleTooltip += "\n【波动率】："
+    if atrChange < -5
+        candleTooltip += "ATR下降(收敛)→准备爆发"
+    else if atrChange > 10
+        candleTooltip += "ATR飙升→市场激烈"
+    else if atr < ta.sma(atr, 20) * 0.8
+        candleTooltip += "低波动→蓄势待发"
+    else
+        candleTooltip += "正常波动"
+
+
 // === K线标记显示 ===
 // 在K线下方显示标记，鼠标悬停时显示详细提示框
 if enableCandleMarking
@@ -216,138 +420,295 @@ if enableCandleMarking
     rsi = ta.rsi(close, 14)
     k = ta.stoch(close, high, low, 14)
     d = ta.sma(k, 3)
-    
+
     // K线形态识别
     candlePattern = ""
+    upperShadowRatio = close > open ? (high - close) / (close - open) : (high - open) / (open - close)
+    lowerShadowRatio = close > open ? (close - low) / (close - open) : (open - low) / (open - close)
+    
     if candleBodySize > avgBodySize * 2
         if isObviousRise
-            candlePattern := "放量长阳线"
+            candlePattern := "长阳线(实体>" + str.tostring(avgBodySize * 2, "#.##") + ")"
         else if isObviousFall
-            candlePattern := "放量长阴线"
+            candlePattern := "长阴线(实体>" + str.tostring(avgBodySize * 2, "#.##") + ")"
         else
-            candlePattern := "大实体K线"
+            candlePattern := "大实体K线(涨跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%)"
     else if math.abs(candleChangePercent) < 0.3
-        candlePattern := "十字星"
-    else if close > open and (high - close) > (close - open) * 2
-        candlePattern := "上影线长"
-    else if close < open and (close - low) > (open - close) * 2
-        candlePattern := "锤头"
+        candlePattern := "十字星(波幅<0.3%)"
+    else if close > open and upperShadowRatio > 2
+        candlePattern := "上吊线(上影/实体>" + str.tostring(upperShadowRatio, "#.1") + "倍)"
+    else if close < open and lowerShadowRatio > 2
+        candlePattern := "锤头线(下影/实体>" + str.tostring(lowerShadowRatio, "#.1") + "倍)"
     else if isObviousRise
-        candlePattern := "阳线"
+        candlePattern := "阳线(+" + str.tostring(candleChangePercent, "#.##") + "%)"
     else if isObviousFall
-        candlePattern := "阴线"
+        candlePattern := "阴线(" + str.tostring(candleChangePercent, "#.##") + "%)"
     else
-        candlePattern := "普通K线"
-    
+        candlePattern := "普通K线(±" + str.tostring(math.abs(candleChangePercent), "#.##") + "%)"
+
     // 成交量描述
     volumeDesc = ""
     volumeChangePercent = volume[1] > 0 ? (volume - volume[1]) / volume[1] * 100 : 0
-    
+
     if isHighVolume
-        volumeDesc := "较昨日放量" + str.tostring(math.abs(volumeChangePercent), "#.1") + "%"
+        volumeDesc := "放量" + str.tostring(math.abs(volumeChangePercent), "#.1") + "%"
         if isObviousRise
-            volumeDesc += "，价升量增"
+            volumeDesc += "，量价齐升(涨" + str.tostring(candleChangePercent, "#.##") + "%)"
         else if isObviousFall
-            volumeDesc += "，价跌量增"
+            volumeDesc += "，量增价跌(跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%)"
+        else
+            volumeDesc += "，量比" + str.tostring(volume/avgVolume, "#.##")
     else if isLowVolume
         volumeDesc := "缩量" + str.tostring(math.abs(volumeChangePercent), "#.1") + "%"
         if isObviousFall
-            volumeDesc += "下跌"
+            volumeDesc += "杀跌(跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%)"
+        else
+            volumeDesc += "，量比" + str.tostring(volume/avgVolume, "#.##")
     else
-        volumeDesc := "成交量正常"
-    
+        volumeDesc := "成交量正常(量比" + str.tostring(volume/avgVolume, "#.##") + ")"
+
     // 均线结构描述
     maStructure = ""
-    if ema1 > ema2 and ema2 > ema3
-        maStructure := "EMA20>EMA60>EMA120，形成多头排列"
-    else if ema1 < ema2 and ema2 < ema3
-        maStructure := "EMA20<EMA60<EMA120，形成空头排列"
-    else if close < ema1
-        maStructure := "跌破EMA20支撑"
-    else if close > ema2
-        maStructure := "突破EMA60阻力"
-    else
-        maStructure := "均线粘合，方向不明"
+    ema20_60_diff = (ema1 - ema2) / ema2 * 100
+    ema60_120_diff = (ema2 - ema3) / ema3 * 100
+    price_ema20_diff = (close - ema1) / ema1 * 100
     
+    if ema1 > ema2 and ema2 > ema3
+        maStructure := "多头排列：EMA20比EMA60高" + str.tostring(math.abs(ema20_60_diff), "#.##") + "%"
+    else if ema1 < ema2 and ema2 < ema3
+        maStructure := "空头排列：EMA20比EMA60低" + str.tostring(math.abs(ema20_60_diff), "#.##") + "%"
+    else if close < ema1
+        if close[1] >= ema1[1]
+            maStructure := "跌破EMA20支撑(距离-" + str.tostring(math.abs(price_ema20_diff), "#.##") + "%)"
+        else
+            maStructure := "持续运行在EMA20下方(-" + str.tostring(math.abs(price_ema20_diff), "#.##") + "%)"
+    else if close > ema2
+        if close[1] <= ema2[1]
+            maStructure := "突破EMA60阻力(距离+" + str.tostring(price_ema20_diff, "#.##") + "%)"
+        else
+            maStructure := "持续运行在EMA60上方(+" + str.tostring(price_ema20_diff, "#.##") + "%)"
+    else
+        maStructure := "均线粘合(20-60日线差距" + str.tostring(math.abs(ema20_60_diff), "#.##") + "%)"
+
     // 技术指标描述
     techIndicators = ""
-    if macd_line > signal_line and macd_line[1] <= signal_line[1]
-        techIndicators := "MACD金叉"
-    else if macd_line < signal_line and macd_line[1] >= signal_line[1]
-        techIndicators := "MACD死叉"
-    else if rsi > 50 and rsi[1] <= 50
-        techIndicators := "RSI回升至50上方"
-    else if rsi < 50 and rsi[1] >= 50
-        techIndicators := "RSI跌破50"
-    else if k > d and k[1] <= d[1]
-        techIndicators := "KDJ金叉"
-    else if k < d and k[1] >= d[1]
-        techIndicators := "KDJ死叉"
-    else
-        techIndicators := "技术指标平稳"
+    macd_strength = math.abs(macd_line - signal_line)
+    histogram = macd_line - signal_line
     
+    if macd_line > signal_line and macd_line[1] <= signal_line[1]
+        techIndicators := "MACD金叉突破(DIF:" + str.tostring(macd_line, "#.####") + " DEA:" + str.tostring(signal_line, "#.####") + " 柱:" + str.tostring(histogram, "#.####") + ")"
+    else if macd_line < signal_line and macd_line[1] >= signal_line[1]
+        techIndicators := "MACD死叉跌破(DIF:" + str.tostring(macd_line, "#.####") + " DEA:" + str.tostring(signal_line, "#.####") + " 柱:" + str.tostring(histogram, "#.####") + ")"
+    else if rsi > 80
+        techIndicators := "RSI严重超买(" + str.tostring(rsi, "#.1") + ">80,高位风险)"
+    else if rsi > 70
+        techIndicators := "RSI超买区(" + str.tostring(rsi, "#.1") + ">70,谨慎追涨)"
+    else if rsi < 20
+        techIndicators := "RSI严重超卖(" + str.tostring(rsi, "#.1") + "<20,筑底机会)"
+    else if rsi < 30
+        techIndicators := "RSI超卖区(" + str.tostring(rsi, "#.1") + "<30,关注反弹)"
+    else if rsi > 50 and rsi[1] <= 50
+        techIndicators := "RSI突破中线(" + str.tostring(rsi, "#.1") + ">50,转强信号)"
+    else if rsi < 50 and rsi[1] >= 50
+        techIndicators := "RSI跌破中线(" + str.tostring(rsi, "#.1") + "<50,转弱信号)"
+    else if k > d and k[1] <= d[1]
+        techIndicators := "KDJ金叉向上(K:" + str.tostring(k, "#.1") + ">D:" + str.tostring(d, "#.1") + ",买入信号)"
+    else if k < d and k[1] >= d[1]
+        techIndicators := "KDJ死叉向下(K:" + str.tostring(k, "#.1") + "<D:" + str.tostring(d, "#.1") + ",卖出信号)"
+    else if k > 80 and d > 80
+        techIndicators := "KDJ超买钝化(K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ",高位震荡)"
+    else if k < 20 and d < 20
+        techIndicators := "KDJ超卖钝化(K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ",低位盘整)"
+    else
+        techIndicators := "指标中性平衡(RSI:" + str.tostring(rsi, "#.1") + " K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ")"
+
     // 支撑阻力位分析
     supportLevel = math.min(low[1], low[2], low[3])  // 近期低点
     resistanceLevel = math.max(high[1], high[2], high[3])  // 近期高点
     
+    supportDistance = (close - supportLevel) / supportLevel * 100
+    resistanceDistance = (resistanceLevel - close) / close * 100
+    ema20Distance = (close - ema1) / ema1 * 100
+    ema60Distance = (close - ema2) / ema2 * 100
+
     supportDesc = ""
     resistanceDesc = ""
-    
+
     if close <= supportLevel * 1.01  // 接近支撑位
-        supportDesc := "前低" + formatPrice(supportLevel) + "，EMA60支撑位"
+        if supportDistance > 0
+            supportDesc := "突破前低支撑" + formatPrice(supportLevel) + "(突破+" + str.tostring(supportDistance, "#.##") + "%)"
+        else
+            supportDesc := "测试前低支撑" + formatPrice(supportLevel) + "(距离" + str.tostring(supportDistance, "+#.##;-#.##") + "%)"
+    else if close > ema1
+        supportDesc := "站稳EMA20支撑" + formatPrice(ema1) + "(距离+" + str.tostring(ema20Distance, "#.##") + "%)"
+    else if close > ema2
+        supportDesc := "回调至EMA60支撑" + formatPrice(ema2) + "(距离+" + str.tostring(ema60Distance, "#.##") + "%)"
     else
-        supportDesc := "EMA20支撑" + formatPrice(ema1)
-    
+        supportDesc := "跌破均线支撑，关注" + formatPrice(supportLevel) + "(距离" + str.tostring(supportDistance, "+#.##;-#.##") + "%)"
+
     if close >= resistanceLevel * 0.99  // 接近阻力位
-        resistanceDesc := "前高" + formatPrice(resistanceLevel) + "，EMA60阻力位"
+        if resistanceDistance < 0
+            resistanceDesc := "突破前高阻力" + formatPrice(resistanceLevel) + "(突破+" + str.tostring(math.abs(resistanceDistance), "#.##") + "%)"
+        else
+            resistanceDesc := "冲击前高阻力" + formatPrice(resistanceLevel) + "(距离" + str.tostring(resistanceDistance, "#.##") + "%)"
+    else if resistanceDistance > 5
+        resistanceDesc := "远离阻力位" + formatPrice(resistanceLevel) + "(距离+" + str.tostring(resistanceDistance, "#.##") + "%)"
     else
-        resistanceDesc := "前高" + formatPrice(resistanceLevel)
+        resistanceDesc := "临近阻力位" + formatPrice(resistanceLevel) + "(距离+" + str.tostring(resistanceDistance, "#.##") + "%)"
+
+    // 增加OBV计算用于背离分析
+    obv = ta.cum(math.sign(ta.change(close)) * volume)
+    obv_ma = ta.sma(obv, 5)
+    
+    // 背离分析
+    macd_divergence = ""
+    price_higher = high > high[5]
+    price_lower = low < low[5]
+    macd_higher = macd_line > macd_line[5]
+    macd_lower = macd_line < macd_line[5]
+    
+    if price_higher and not macd_higher
+        macd_divergence := "MACD顶背离"
+    else if price_lower and not macd_lower
+        macd_divergence := "MACD底背离"
+    
+    // 计算量比用于后续分析
+    volumeRatio = volume > 0 and avgVolume > 0 ? volume / avgVolume : 1
+    
+    // 综合信号识别
+    signal_pattern = ""
+    
+    // 1. 阶段顶部信号：价升量缩 + MACD顶背离 + RSI>80 + OBV走平
+    if isObviousRise and isLowVolume and macd_divergence == "MACD顶背离" and rsi > 80 and math.abs(ta.change(obv_ma)) < avgVolume * 0.1
+        signal_pattern := "【阶段顶部】价升量缩+" + macd_divergence + "+RSI超买(" + str.tostring(rsi, "#.1") + ">80)+OBV走平，主力出货阶段"
+    
+    // 2. 假突破信号：放量长上影 + 随后缩量阴线
+    else if isHighVolume and upperShadowRatio > 2 and close < open
+        signal_pattern := "【假突破陷阱】放量长上影(上影/实体>" + str.tostring(upperShadowRatio, "#.1") + "倍)+量比" + str.tostring(volumeRatio, "#.##") + "，诱多陷阱"
+    
+    // 3. 主升启动：放量突破平台 + 均线多头 + MACD翻红
+    else if isHighVolume and isObviousRise and ema1 > ema2 and ema2 > ema3 and macd_line > 0 and macd_line > signal_line
+        signal_pattern := "【主升启动】放量突破(量比" + str.tostring(volumeRatio, "#.##") + ")+均线多头排列+MACD翻红(" + str.tostring(macd_line, "#.####") + ">0)，主升浪确认"
+    
+    // 4. 筑底阶段：缩量阴线 → 放量阳线 + MACD底背离
+    else if isLowVolume and isObviousFall and macd_divergence == "MACD底背离"
+        signal_pattern := "【筑底阶段】缩量阴线(量比" + str.tostring(volumeRatio, "#.##") + ")+" + macd_divergence + "，吸筹完成信号"
+    
+    // 5. 真反转：OBV突破前高 + RSI上穿50 + 均线扭转
+    else if obv > ta.highest(obv, 20) and rsi > 50 and rsi[1] <= 50 and ema1 > ema1[1] and ema1[1] <= ema1[2]
+        signal_pattern := "【真反转确认】OBV突破前高+RSI上穿50(" + str.tostring(rsi, "#.1") + ">50)+均线扭转，趋势反转确认"
+    
+    // 6. 量价背离：价格新高但成交量萎缩
+    else if high > ta.highest(high, 10) and volume < ta.sma(volume, 5) * 0.8
+        signal_pattern := "【量价背离】创新高(" + formatPrice(high) + ")但成交量萎缩(量比" + str.tostring(volumeRatio, "#.##") + ")，警惕回调风险"
+    
+    // 7. 底部放量：低位放量阳线 + MACD金叉
+    else if low <= ta.lowest(low, 10) * 1.05 and isHighVolume and isObviousRise and macd_line > signal_line and macd_line[1] <= signal_line[1]
+        signal_pattern := "【底部放量】低位放量阳线(涨" + str.tostring(candleChangePercent, "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")+MACD金叉，筑底成功"
+    
+    // 8. 高位缩量：高位缩量阴线预警
+    else if high >= ta.highest(high, 10) * 0.95 and isLowVolume and isObviousFall
+        signal_pattern := "【高位缩量】高位缩量阴线(跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")，谨防深度回调"
     
     // 综合结论
     conclusion = ""
-    if trendUp and isObviousRise and isHighVolume
-        conclusion := "短期趋势转强，若突破" + formatPrice(resistanceLevel) + "有望上攻"
-    else if trendDown and isObviousFall and isHighVolume
-        conclusion := "空头趋势加强，关注" + formatPrice(supportLevel) + "支撑是否有效"
-    else if isObviousRise and isLowVolume
-        conclusion := "反弹乏力，成交量不足，谨慎追高"
-    else if isObviousFall and isLowVolume
-        conclusion := "杀跌有限，关注" + formatPrice(supportLevel) + "支撑"
+    priceStrength = math.abs(candleChangePercent)
+    
+    // 优先显示复合信号
+    if signal_pattern != ""
+        conclusion := signal_pattern
     else
-        conclusion := "震荡整理，等待方向选择"
+        // 添加更多技术指标组合信号
+        if macd_line > signal_line and macd_line[1] <= signal_line[1] and k > d and k[1] <= d[1] and rsi > 50
+            conclusion := "【多重金叉共振】MACD金叉(" + str.tostring(macd_line, "#.####") + ")+KDJ金叉(K:" + str.tostring(k, "#.1") + ">D:" + str.tostring(d, "#.1") + ")+RSI强势(" + str.tostring(rsi, "#.1") + ">50)，强烈看涨"
+        
+        else if macd_line < signal_line and macd_line[1] >= signal_line[1] and k < d and k[1] >= d[1] and rsi < 50
+            conclusion := "【多重死叉共振】MACD死叉(" + str.tostring(macd_line, "#.####") + ")+KDJ死叉(K:" + str.tostring(k, "#.1") + "<D:" + str.tostring(d, "#.1") + ")+RSI弱势(" + str.tostring(rsi, "#.1") + "<50)，强烈看跌"
+        
+        else if rsi > 80 and k > 80 and d > 80 and isObviousRise and isLowVolume
+            conclusion := "【超买钝化】RSI超买(" + str.tostring(rsi, "#.1") + ">80)+KDJ超买(K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ")+价升量缩，顶部风险极高"
+        
+        else if rsi < 20 and k < 20 and d < 20 and isObviousFall and isLowVolume
+            conclusion := "【超卖钝化】RSI超卖(" + str.tostring(rsi, "#.1") + "<20)+KDJ超卖(K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ")+缩量下跌，底部机会显现"
+        
+        else
+            // 判断筑顶筑底信号强度
+            signalStrength = priceStrength * volumeRatio
+            
+            if trendUp and isObviousRise and isHighVolume
+                if candleChangePercent > 3 and volumeRatio > 2
+                    conclusion := "强势筑底完成：暴涨" + str.tostring(candleChangePercent, "#.##") + "%，爆量" + str.tostring(volumeRatio, "#.##") + "倍，突破" + formatPrice(resistanceLevel) + "强势看涨"
+                else
+                    conclusion := "筑底回升确认：上涨" + str.tostring(candleChangePercent, "#.##") + "%，放量" + str.tostring(volumeRatio, "#.##") + "倍，突破" + formatPrice(resistanceLevel) + "看涨"
+            else if trendDown and isObviousFall and isHighVolume
+                if math.abs(candleChangePercent) > 3 and volumeRatio > 2
+                    conclusion := "筑顶暴跌确认：重挫" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，恐慌抛售量" + str.tostring(volumeRatio, "#.##") + "倍，跌破" + formatPrice(supportLevel) + "看空"
+                else
+                    conclusion := "筑顶下跌信号：下跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，放量" + str.tostring(volumeRatio, "#.##") + "倍，跌破" + formatPrice(supportLevel) + "看跌"
+            else if isObviousRise and isLowVolume
+                conclusion := "反弹乏力警告：涨" + str.tostring(candleChangePercent, "#.##") + "%，但缩量" + str.tostring(volumeRatio, "#.##") + "倍，量价背离谨慎追高"
+            else if isObviousFall and isLowVolume
+                conclusion := "缩量杀跌有限：跌" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + "倍，关注" + formatPrice(supportLevel) + "支撑反弹"
+            else if priceStrength < 0.5 and volumeRatio < 0.8
+                conclusion := "横盘缩量整理：波幅" + str.tostring(priceStrength, "#.##") + "%，缩量" + str.tostring(volumeRatio, "#.##") + "倍，蓄势待发等方向"
+            else if signalStrength > 3
+                conclusion := "震荡加剧信号：波幅" + str.tostring(priceStrength, "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + "倍，关注突破方向"
+            else
+                conclusion := "常规震荡运行：波幅" + str.tostring(priceStrength, "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + "倍，维持区间操作"
+
+    // 量价关系分析
+    volumePriceAnalysis = ""
+    if isHighVolume and isObviousRise
+        volumePriceAnalysis := "量价齐升：放量上涨(" + str.tostring(candleChangePercent, "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")，多头强势"
+    else if isHighVolume and isObviousFall
+        volumePriceAnalysis := "量增价跌：放量下跌(" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")，空头力量强"
+    else if isLowVolume and isObviousRise
+        volumePriceAnalysis := "量价背离：缩量上涨(" + str.tostring(candleChangePercent, "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")，反弹乏力"
+    else if isLowVolume and isObviousFall
+        volumePriceAnalysis := "缩量下跌：杀跌有限(" + str.tostring(math.abs(candleChangePercent), "#.##") + "%，量比" + str.tostring(volumeRatio, "#.##") + ")，恐慌情绪缓解"
+    else if high > ta.highest(high, 10) and volume < ta.sma(volume, 5) * 0.8
+        volumePriceAnalysis := "量价背离：创新高但缩量(" + formatPrice(high) + "，量比" + str.tostring(volumeRatio, "#.##") + ")，警惕顶部风险"
+    else
+        volumePriceAnalysis := "量价配合：价量关系正常(量比" + str.tostring(volumeRatio, "#.##") + ")，走势健康"
+
+    // 构建五大类分析提示信息
+    tooltipText = "【K线分析】" + candlePattern + "\n"
+    tooltipText += "涨跌幅：" + str.tostring(candleChangePercent, "+#.##;-#.##") + "%"
+    tooltipText += "，波动：" + str.tostring(((high-low)/close)*100, "#.##") + "%"
+    tooltipText += "，实体：" + str.tostring((candleBodySize/close)*100, "#.##") + "%\n\n"
+
+    tooltipText += "【成交量分析】" + volumeDesc + "\n"
+    tooltipText += "当前量：" + formatVolume(volume) + "，平均量：" + formatVolume(avgVolume) + "\n"
+    tooltipText += "量比：" + str.tostring(volumeRatio, "#.##") + "，" + (volumeRatio > 1.5 ? "明显放量" : volumeRatio < 0.8 ? "明显缩量" : "正常成交") + "\n\n"
+
+    tooltipText += "【量价分析】" + volumePriceAnalysis + "\n"
+    if macd_divergence != ""
+        tooltipText += "背离信号：" + macd_divergence + "，关注趋势变化\n"
+    tooltipText += "\n"
+
+    tooltipText += "【技术指标分析】\n"
+    tooltipText += "MACD：" + (macd_line > signal_line ? "多头(" : "空头(") + str.tostring(macd_line, "#.####") + ")" + 
+                  (macd_line > signal_line and macd_line[1] <= signal_line[1] ? " 🔥金叉" : 
+                   macd_line < signal_line and macd_line[1] >= signal_line[1] ? " ❄️死叉" : ""
+                  ) + "\n"
+    tooltipText += "RSI(" + str.tostring(rsi, "#.1") + ")：" + 
+                  (rsi > 80 ? "🔴严重超买" : rsi > 70 ? "🟡超买区" : 
+                   rsi < 20 ? "🟢严重超卖" : rsi < 30 ? "🟡超卖区" : 
+                   rsi > 50 ? "💪强势区" : "📉弱势区") + "\n"
+    tooltipText += "KDJ(K:" + str.tostring(k, "#.1") + " D:" + str.tostring(d, "#.1") + ")：" + 
+                  (k > d and k[1] <= d[1] ? "🔥金叉" : k < d and k[1] >= d[1] ? "❄️死叉" : 
+                   k > 80 and d > 80 ? "🔴超买钝化" : k < 20 and d < 20 ? "🟢超卖钝化" : "中性") + "\n"
+    tooltipText += "均线：" + maStructure + "\n"
+    tooltipText += "支撑：" + supportDesc + "\n"
+    tooltipText += "阻力：" + resistanceDesc + "\n\n"
+
+    tooltipText += "【结论】" + conclusion
+
+    // 更新K线信息显示条件（为全局plotshape准备）
+    showKlineInfo := isObviousRise or isObviousFall or math.abs(candleChangePercent) > 1.0
     
-    // 构建六维度提示信息
-    tooltipText = "一、K线形态：" + candlePattern + "\n"
-    tooltipText += "(涨跌幅：" + str.tostring(candleChangePercent, "+#.##;-#.##") + "%)\n\n"
-    
-    tooltipText += "二、成交量：" + volumeDesc + "\n"
-    tooltipText += "(当前量：" + formatVolume(volume) + "，平均量：" + formatVolume(avgVolume) + ")\n\n"
-    
-    tooltipText += "三、均线结构：" + maStructure + "\n"
-    tooltipText += "(EMA20：" + formatPrice(ema1) + "，EMA60：" + formatPrice(ema2) + ")\n\n"
-    
-    tooltipText += "四、技术指标：" + techIndicators + "\n"
-    tooltipText += "(MACD：" + str.tostring(macd_line, "+#.####;-#.####") + "，RSI：" + str.tostring(rsi, "#.1") + ")\n\n"
-    
-    tooltipText += "五、支撑与阻力：\n"
-    tooltipText += "支撑位：" + supportDesc + "\n"
-    tooltipText += "阻力位：" + resistanceDesc + "\n\n"
-    
-    tooltipText += "六、综合结论：" + conclusion
-    
-    // 根据K线类型显示不同的标记
-    if isObviousRise
-        label.new(bar_index, low, text="📈", style=label.style_label_up, 
-                  color=riseMarkColor, textcolor=markTextColor, 
-                  size=size.small, tooltip=tooltipText)
-    else if isObviousFall
-        label.new(bar_index, low, text="📉", style=label.style_label_up, 
-                  color=fallMarkColor, textcolor=markTextColor, 
-                  size=size.small, tooltip=tooltipText)
-    else if math.abs(candleChangePercent) > 1.0  // 对于波动超过1%的K线也显示标记
-        label.new(bar_index, low, text="📊", style=label.style_label_up, 
-                  color=normalMarkColor, textcolor=markTextColor, 
-                  size=size.tiny, tooltip=tooltipText)
+    // 将新的五大类分析内容赋值给candleTooltip用于显示
+    candleTooltip := tooltipText
 
 
 // ===================================================
@@ -393,6 +754,11 @@ deathCross = strategyFastMA < strategySlowMA and strategyFastMA[1] >= strategySl
 // 策略趋势判断
 strategyTrendUp = strategyFastMA > strategySlowMA
 strategyTrendDown = strategyFastMA < strategySlowMA
+
+// 更新全局趋势判断为基于策略均线
+trendUp := strategyTrendUp
+trendDown := strategyTrendDown
+
 
 // === 交易执行价格计算 ===
 entryPrice_exec = entryTiming == '开盘价' ? open : entryTiming == '收盘价' ? close : close
@@ -564,7 +930,7 @@ bufferShow = bufferEnabled and not na(bufferUpperBound) and not na(bufferLowerBo
 bufferUpperLine = bufferShow ? bufferUpperBound : na
 plot(bufferUpperLine, color = color.new(color.orange, 50), linewidth = 2, title = '缓冲区上边界', style = plot.style_line)
 
-// 绘制缓冲区下边界线  
+// 绘制缓冲区下边界线
 bufferLowerLine = bufferShow ? bufferLowerBound : na
 plot(bufferLowerLine, color = color.new(color.orange, 50), linewidth = 2, title = '缓冲区下边界', style = plot.style_line)
 
@@ -622,7 +988,7 @@ if barstate.islast and showInfoTable and not na(infoTable)
         bufferStatus := '等待开仓'
     else
         bufferStatus := '已关闭'
-    
+
     bufferColor = bufferEnabled and not na(bufferEntryPrice) ? (inBufferZone ? color.red : color.green) : color.gray
     table.cell(infoTable, 1, 9, bufferStatus, text_color = color.black, bgcolor = bufferColor)
 
@@ -648,17 +1014,17 @@ if barstate.islast and showInfoTable and not na(infoTable)
             candleMarkText := '➡️ ' + str.tostring(candleChangePercent, '#.##') + '% [详情]'
     else
         candleMarkText := '已关闭'
-    
+
     candleMarkColor = enableCandleMarking ? (isObviousRise ? color.lime : isObviousFall ? color.red : color.gray) : color.gray
     table.cell(infoTable, 1, 11, candleMarkText, text_color = color.black, bgcolor = candleMarkColor)
-    
+
     // K线详细分析信息（当启用K线标记时显示更多行）
     if enableCandleMarking
         // 详细K线数据
         table.cell(infoTable, 0, 12, 'OHLC数据', text_color = color.black, bgcolor = color.gray)
         ohlcText = 'O:' + str.tostring(open, '#.##') + ' H:' + str.tostring(high, '#.##') + ' L:' + str.tostring(low, '#.##') + ' C:' + str.tostring(close, '#.##')
         table.cell(infoTable, 1, 12, ohlcText, text_color = color.black, bgcolor = color.blue)
-        
+
         // 量价关系分析
         table.cell(infoTable, 0, 13, '量价关系', text_color = color.black, bgcolor = color.gray)
         volumePriceText = ''
@@ -678,7 +1044,7 @@ if barstate.islast and showInfoTable and not na(infoTable)
         else
             volumePriceText := '⚪ 正常震荡'
         table.cell(infoTable, 1, 13, volumePriceText, text_color = color.black, bgcolor = volumePriceColor)
-        
+
         // 成交量详细分析
         table.cell(infoTable, 0, 14, '成交量详情', text_color = color.black, bgcolor = color.gray)
         volumeDetailText = str.tostring(volume/avgVolume, '#.##') + '倍 ('
@@ -690,16 +1056,16 @@ if barstate.islast and showInfoTable and not na(infoTable)
             volumeDetailText += '正常量)'
         volumeColor = isHighVolume ? color.lime : isLowVolume ? color.orange : color.gray
         table.cell(infoTable, 1, 14, volumeDetailText, text_color = color.black, bgcolor = volumeColor)
-        
+
         // 均线关系分析
         table.cell(infoTable, 0, 15, '均线关系', text_color = color.black, bgcolor = color.gray)
-        maRelationText = 'EMA1距离:' + str.tostring(((close - ema1) / ema1) * 100, '#.##') + '% | EMA2距离:' + str.tostring(((close - ema2) / ema2) * 100, '#.##') + '%'
-        maRelationColor = close > ema1 and close > ema2 ? color.lime : close < ema1 and close < ema2 ? color.red : color.yellow
+        maRelationText = '快线(' + strategyFast + ')距离:' + str.tostring(((close - strategyFastMA) / strategyFastMA) * 100, '#.##') + '% | 慢线(' + strategySlow + ')距离:' + str.tostring(((close - strategySlowMA) / strategySlowMA) * 100, '#.##') + '%'
+        maRelationColor = close > strategyFastMA and close > strategySlowMA ? color.lime : close < strategyFastMA and close < strategySlowMA ? color.red : color.yellow
         table.cell(infoTable, 1, 15, maRelationText, text_color = color.black, bgcolor = maRelationColor)
-        
+
         // 趋势状态
         table.cell(infoTable, 0, 16, '趋势状态', text_color = color.black, bgcolor = color.gray)
-        trendText = trendUp ? '📈 多头趋势 (EMA1>EMA2)' : '📉 空头趋势 (EMA1<EMA2)'
+        trendText = trendUp ? '📈 多头趋势 (' + strategyFast + '>' + strategySlow + ')' : '📉 空头趋势 (' + strategyFast + '<' + strategySlow + ')'
         trendColor = trendUp ? color.green : color.red
         table.cell(infoTable, 1, 16, trendText, text_color = color.black, bgcolor = trendColor)
 
