@@ -8,7 +8,8 @@ DEFAULT_ENV="dev"
 DEFAULT_APP_LOG="./app-log"
 DEFAULT_JVM_LOG="./jvm-log"
 DEFAULT_APP_PORT=""  # 默认应用端口，如果设置则会覆盖其他端口配置
-DEFAULT_APP_DEBUG_PORT="58999"  # 默认调试端口
+DEFAULT_APP_DEBUG_PORT=""  # 默认调试端口
+source /etc/profile
 
 cmd=$1        # 第一个参数：命令，如 start, stop, debug, print
 env=$2        # 第二个参数：环境，如 dev 或 prod
@@ -25,16 +26,40 @@ if [ -z "$appName" ]; then
     fi
 fi
 
+# ----------------- 日志打印公共方法 -----------------
+function log_info() {
+    echo -e "\033[32m[INFO]\033[0m $1"
+}
+
+function log_warn() {
+    echo -e "\033[33m[WARN]\033[0m $1"
+}
+
+function log_debug() {
+    echo -e "\033[36m[DEBUG]\033[0m $1"
+}
+
+function log_error() {
+    echo -e "\033[31m[ERROR]\033[0m $1"
+}
+
+# 公共命令执行方法
+function execute_cmd() {
+    local cmd="$1"
+    log_debug "执行: $cmd"
+    eval "$cmd"
+}
+
 # 获取应用 PID
 function getAppPid() {
     if [ -n "$DEFAULT_APP_PORT" ]; then
         # 有默认端口：先通过JAR名查找，再验证端口参数
-        echo "查找运行 $appName 的进程..."
-        echo "执行: ps -ef | grep java | grep \"$appName\" | grep -v grep"
-        local psResult=$(ps -ef | grep java | grep "$appName" | grep -v grep)
-        
+        log_debug "查找运行 $appName 的进程..."
+        local psCmd="ps -ef | grep java | grep '$appName' | grep -v grep"
+        log_debug "执行: $psCmd"
+        local psResult=$(eval "$psCmd")
+
         if [ -n "$psResult" ]; then
-            echo "找到进程: $psResult"
             # 检查进程是否包含指定端口参数
             while IFS= read -r line; do
                 local pid=$(echo "$line" | awk '{print $2}')
@@ -42,71 +67,68 @@ function getAppPid() {
                 # 检查命令行是否包含指定端口参数
                 if echo "$cmdline" | grep -q "\-Dserver\.port=$DEFAULT_APP_PORT"; then
                     appId="$pid"
-                    echo "找到匹配进程: PID=$pid (端口参数: $DEFAULT_APP_PORT)"
                     return
                 fi
             done <<< "$psResult"
-            
+
             # 如果没找到端口参数匹配的，也检查是否有监听指定端口的
-            echo "检查是否有进程监听端口 $DEFAULT_APP_PORT..."
             while IFS= read -r line; do
                 local pid=$(echo "$line" | awk '{print $2}')
                 if netstat -tlnp 2>/dev/null | grep -q ":${DEFAULT_APP_PORT}.*${pid}/java" || \
                    ss -tlnp 2>/dev/null | grep -q ":${DEFAULT_APP_PORT}.*pid=${pid}"; then
                     appId="$pid"
-                    echo "找到匹配进程: PID=$pid (监听端口: $DEFAULT_APP_PORT)"
                     return
                 fi
             done <<< "$psResult"
         fi
-        echo "未找到使用端口 $DEFAULT_APP_PORT 的 $appName 进程"
     else
         # 没有默认端口：通过应用名查找进程（原始逻辑）
-        echo "查找命令: ps -ef | grep java | grep \"$appName\" | grep -v grep"
-        local psResult=$(ps -ef | grep java | grep "$appName" | grep -v grep)
+        local psCmd="ps -ef | grep java | grep '$appName' | grep -v grep"
+        log_debug "执行: $psCmd"
+        local psResult=$(eval "$psCmd")
         if [ -n "$psResult" ]; then
-            echo "找到进程: $psResult"
             appId=$(echo "$psResult" | awk '{print $2}')
-        else
-            echo "未找到 $appName 进程"
         fi
     fi
 }
 
-# ----------------- 显示信息 -----------------
-function info() {
-    echo "===================================================="
-    echo "应用启动管理脚本"
-    echo "作者: aGeng"
-    echo "版本: $version"
-    echo "更新日期: 2024-08-23"
-    echo "===================================================="
-    echo ""
-    echo "命令格式：$0 {start|debug|stop|restart|status|log|print} [env] [appName]"
-    echo ""
-    echo "参数说明："
-    echo " start [env] : 启动应用，默认环境: $DEFAULT_ENV"
-    echo " debug : 启动调试模式，JDWP 调试端口 $DEFAULT_APP_DEBUG_PORT"
-    echo " stop : 停止应用"
-    echo " restart [env] : 重启应用，默认环境: $DEFAULT_ENV"
-    echo " status : 查看应用状态及 PID"
-    echo " log : 查看日志（tail -f $DEFAULT_APP_LOG/log_total.log）"
-    echo " print [env] : 打印启动命令（不执行）"
-    echo ""
-    echo "🔧 DEFAULT_APP_PORT 变量说明："
-    echo " - 如果设置了 DEFAULT_APP_PORT，会用该端口查找进程并在启动时添加端口参数"
-    echo " - 如果未设置，则使用应用名查找进程，启动时不添加端口参数"
-    echo " - 设置方式：DEFAULT_APP_PORT=\"8081\" ./app.sh start"
-    echo ""
-    echo "使用示例："
-    echo " $0 start # 启动默认环境 ($DEFAULT_ENV)"
-    echo " $0 start prod # 启动生产环境"
-    echo " $0 debug # 调试模式"
-    echo " $0 stop # 停止应用"
-    echo " $0 restart # 重启默认环境 ($DEFAULT_ENV)"
-    echo " $0 print dev # 打印开发环境启动命令"
-    echo "===================================================="
+# ----------------- 显示帮助 -----------------
+function help() {
+    log_info "应用启动管理脚本 v$version"
+    log_info "命令: $0 {start|debug|stop|restart|status|log|print|info|help} [env] [appName]"
+    log_info "start [env]  - 启动应用"
+    log_info "debug        - 调试模式"
+    log_info "stop         - 停止应用"
+    log_info "restart [env]- 重启应用"
+    log_info "status       - 查看状态"
+    log_info "log          - 查看日志"
+    log_info "print [env]  - 打印命令"
+    log_info "info         - 显示应用信息"
+    log_info "help         - 显示帮助信息"
     exit 0
+}
+
+# ----------------- 显示应用信息 -----------------
+function info() {
+    log_info "应用名称: $appName"
+    if [ -z "$env" ]; then env=$DEFAULT_ENV; fi
+    log_info "运行环境: $env"
+    if [ -n "$DEFAULT_APP_PORT" ]; then
+        log_info "配置端口: $DEFAULT_APP_PORT"
+    fi
+    log_info "调试端口: $DEFAULT_APP_DEBUG_PORT"
+
+    # 显示启动命令
+    local buildCmd=$(buildStartCmd)
+    log_info "启动命令: $buildCmd"
+
+    # 检查运行状态
+    getAppPid
+    if [ -z "$appId" ]; then
+        log_info "运行状态: 未运行"
+    else
+        log_info "运行状态: 运行中 (PID: $appId)"
+    fi
 }
 
 # ----------------- 构建启动命令 -----------------
@@ -122,99 +144,67 @@ function buildStartCmd() {
     fi
 
     if [ "$env" == "dev" ]; then
-        echo "java -Xms1G -Xmx4G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName"
+        echo "nohup java -Xms1G -Xmx4G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName > /dev/null 2>&1 &"
     elif [ "$env" == "prod" ]; then
-        echo "java -server -XX:+UnlockExperimentalVMOptions -Xms20G -Xmx20G -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:+PrintGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -Xloggc:$DEFAULT_JVM_LOG/gc-$(date +%Y%m%d_%H%M%S).log -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=200M -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName"
+        echo "nohup java -server -XX:+UnlockExperimentalVMOptions -Xms20G -Xmx20G -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:+PrintGC -XX:+PrintGCDetails -XX:+PrintGCTimeStamps -XX:+PrintGCDateStamps -XX:+PrintGCApplicationStoppedTime -XX:+PrintGCApplicationConcurrentTime -Xloggc:$DEFAULT_JVM_LOG/gc-$(date +%Y%m%d_%H%M%S).log -XX:+UseGCLogFileRotation -XX:NumberOfGCLogFiles=10 -XX:GCLogFileSize=200M -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName > /dev/null 2>&1 &"
     else
-        echo "java -Xms1G -Xmx2G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName"
+        echo "nohup java -Xms1G -Xmx2G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName > /dev/null 2>&1 &"
     fi
+}
+
+# ----------------- 构建调试命令 -----------------
+function buildDebugCmd() {
+    mkdir -p $DEFAULT_APP_LOG
+
+    # 构建调试模式的端口参数（只有设置了 DEFAULT_APP_PORT 才添加）
+    local portParam=""
+    if [ -n "$DEFAULT_APP_PORT" ]; then
+        portParam="-Dserver.port=$DEFAULT_APP_PORT"
+    fi
+
+    echo "nohup java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=$DEFAULT_APP_DEBUG_PORT -Xms1G -Xmx4G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName > /dev/null 2>&1 &"
 }
 
 # ----------------- 启动应用 -----------------
 function start() {
     getAppPid
     if [ -n "$appId" ]; then
-        if [ -n "$DEFAULT_APP_PORT" ]; then
-            echo "应用 $appName 已经运行 (PID: $appId, 端口: $DEFAULT_APP_PORT)，请检查。"
-        else
-            echo "应用 $appName 已经运行 (PID: $appId)，请检查。"
-        fi
+        log_warn "应用已运行 (PID: $appId)"
         return
     fi
-    cmdStr=$(buildStartCmd)
-    echo "启动命令: $cmdStr"
-    echo "执行: nohup $cmdStr > /dev/null 2>&1 &"
-    nohup $cmdStr > /dev/null 2>&1 &
+    local startCmd=$(buildStartCmd)
+    execute_cmd "$startCmd"
     local startPid=$!
-    echo "启动进程PID: $startPid"
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        echo "$env 环境启动完成，端口: $DEFAULT_APP_PORT"
-    else
-        echo "$env 环境启动完成"
-    fi
+    log_info "启动成功 (PID: $startPid)"
 }
 
 # ----------------- 调试模式 -----------------
 function debug() {
     getAppPid
     if [ -n "$appId" ]; then
-        if [ -n "$DEFAULT_APP_PORT" ]; then
-            echo "应用 $appName 已经运行 (PID: $appId, 端口: $DEFAULT_APP_PORT)，请检查。"
-        else
-            echo "应用 $appName 已经运行 (PID: $appId)，请检查。"
-        fi
+        log_warn "应用已运行 (PID: $appId)"
         return
     fi
-    mkdir -p $DEFAULT_APP_LOG
-    
-    # 构建调试模式的端口参数（只有设置了 DEFAULT_APP_PORT 才添加）
-    local portParam=""
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        portParam="-Dserver.port=$DEFAULT_APP_PORT"
-    fi
-    
-    local debugCmd="java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=$DEFAULT_APP_DEBUG_PORT -Xms1G -Xmx4G -XX:+UseSerialGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=$DEFAULT_APP_LOG/heapdump-$(date +%Y%m%d_%H%M%S).hprof $portParam -jar $appName"
-    
-    echo "调试命令: $debugCmd"
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        echo "应用端口: $DEFAULT_APP_PORT, 调试端口: $DEFAULT_APP_DEBUG_PORT"
-    else
-        echo "调试端口: $DEFAULT_APP_DEBUG_PORT"
-    fi
-    echo "执行: nohup $debugCmd > /dev/null 2>&1 &"
-    nohup $debugCmd > /dev/null 2>&1 &
+    local debugCmd=$(buildDebugCmd)
+    execute_cmd "$debugCmd"
     local debugPid=$!
-    echo "调试进程PID: $debugPid"
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        echo "调试模式启动完成，应用端口: $DEFAULT_APP_PORT, 调试端口: $DEFAULT_APP_DEBUG_PORT"
-    else
-        echo "调试模式启动完成，调试端口: $DEFAULT_APP_DEBUG_PORT"
-    fi
+    log_info "调试启动成功 (PID: $debugPid, 调试端口: $DEFAULT_APP_DEBUG_PORT)"
 }
 
 # ----------------- 停止应用 -----------------
 function stop() {
     getAppPid
     if [ -z "$appId" ]; then
-        if [ -n "$DEFAULT_APP_PORT" ]; then
-            echo "$appName (端口: $DEFAULT_APP_PORT) 未运行"
-        else
-            echo "$appName 未运行"
-        fi
+        log_warn "应用未运行"
         return
     fi
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        echo "停止应用 $appName (PID: $appId, 端口: $DEFAULT_APP_PORT)..."
-    else
-        echo "停止应用 $appName (PID: $appId)..."
-    fi
-    echo "执行: kill -9 $appId"
-    kill -9 $appId
+    local killCmd="kill -9 $appId"
+    execute_cmd "$killCmd"
     local killResult=$?
     if [ $killResult -eq 0 ]; then
-        echo "已停止"
+        log_info "停止成功"
     else
-        echo "停止失败，退出码: $killResult"
+        log_error "停止失败 (退出码: $killResult)"
     fi
 }
 
@@ -228,42 +218,33 @@ function restart() {
 function status() {
     getAppPid
     if [ -z "$appId" ]; then
-        if [ -n "$DEFAULT_APP_PORT" ]; then
-            echo -e "\033[31m $appName (端口: $DEFAULT_APP_PORT) 未运行 \033[0m"
-        else
-            echo -e "\033[31m $appName 未运行 \033[0m"
-        fi
+        log_warn "应用未运行"
     else
         if [ -n "$DEFAULT_APP_PORT" ]; then
-            echo -e "\033[32m $appName 正在运行 (PID: $appId, 端口: $DEFAULT_APP_PORT) \033[0m"
+            log_info "应用运行中 (PID: $appId, 端口: $DEFAULT_APP_PORT)"
             # 验证端口监听状态
             if netstat -tlnp 2>/dev/null | grep -q ":${DEFAULT_APP_PORT}.*${appId}/java" || \
                ss -tlnp 2>/dev/null | grep -q ":${DEFAULT_APP_PORT}.*pid=${appId}"; then
-                echo -e "\033[32m 端口 $DEFAULT_APP_PORT 正在监听中 ✓ \033[0m"
+                log_info "端口监听正常"
             else
-                echo -e "\033[33m 警告: 端口 $DEFAULT_APP_PORT 未监听，应用可能正在启动中 \033[0m"
+                log_warn "端口未监听"
             fi
         else
-            echo -e "\033[32m $appName 正在运行 (PID: $appId) \033[0m"
+            log_info "应用运行中 (PID: $appId)"
         fi
     fi
 }
 
 # ----------------- 查看日志 -----------------
 function log() {
-    echo "查看日志 $DEFAULT_APP_LOG/log_total.log..."
-    echo "执行: tail -f $DEFAULT_APP_LOG/log_total.log"
-    tail -f $DEFAULT_APP_LOG/log_total.log
+    local tailCmd="tail -n 500 -f $DEFAULT_APP_LOG/log_total.log"
+    execute_cmd "$tailCmd"
 }
 
 # ----------------- 打印启动命令 -----------------
 function print() {
-    local printCmd=$(buildStartCmd)
-    echo "$env 环境启动命令:"
-    echo "$printCmd"
-    if [ -n "$DEFAULT_APP_PORT" ]; then
-        echo "端口: $DEFAULT_APP_PORT"
-    fi
+    local buildCmd=$(buildStartCmd)
+    log_debug "启动命令: $buildCmd"
 }
 
 # ----------------- 命令解析 -----------------
@@ -275,5 +256,7 @@ case $cmd in
     status) status ;;
     log) log ;;
     print) print ;;
-    *) info ;;
+    info) info ;;
+    help) help ;;
+    *) help ;;
 esac
